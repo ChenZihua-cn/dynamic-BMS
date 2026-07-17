@@ -161,8 +161,8 @@ class EnergyMixin:
 
     # -------------------------------------------------------------------------
     def update_representative(self, verbose=False):
-        """Check if we've seen this formula before, either in its current form
-or in another form.
+        """
+Check if we've seen this formula before, either in its current form or in another form.
 
 *If we haven't seen it, save it and return 1.
 

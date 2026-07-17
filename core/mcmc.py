@@ -318,7 +318,7 @@ datasets where used for training.
                 sys.stdout.flush()
             if write_files:
                 json.dump([s, float(self.bic), float(self.E),
-                           float(self.get_energy(verbose=verbose)),
+                           float(self.get_energy(verbose=verbose)[0]),
                            str(self), self.par_values], tracef)
                 tracef.write('\n')
                 tracef.flush()
