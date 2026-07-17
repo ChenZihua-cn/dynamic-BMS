@@ -1,24 +1,27 @@
-# Experiments and reproduce
+# Experiments & Reproducibility
 
-This folder is used to test the reliabality of experts. 
-- Phase1: test the complexity and dimension experts with pedulum case( except formula like 'T = k * L +b' )
-- Phase2: add/test the limit expert with theory gas case( P-> 0, V-> \infinity )
-- Phase3: add/test the symmetry expert with gravity wave exchange mass case( q<-->1/q )
-- Phase4: add/test the parameter_range and asymptotic expert with BBH case( post-newtownian and ringdown )
+Validates that the hierarchical Bayesian model correctly infers expert weights from data, and that DP-BSR delivers physically robust expressions under distribution shift.
 
-```
-main
-|-- e.t.c...
-`-- experiments/
-    |-- single_experiment.py
-    |-- sweep.py
-    |-- configs/
-        |-- phase1_pendulum.yaml
-        |-- phase2_ideal_gas.yaml
-        |-- phase3_gravity_wave.yaml
-        `-- phase4_gw_merger.yaml
-    |-- logs/
-        |-- e.t.c...
+## Phase Plan
+
+| Phase | Goal | Key Verification |
+|-------|------|------------------|
+| **Phase 1: Synthetic Calibration** | Vary noise level \(\sigma\) and sample size \(N\) on synthetic datasets | High noise → \(g_{\text{Occam}}\) posterior concentrates at high values (emergence, not hand-coded). Small \(N\) → \(g_{\text{asymp}}\) posterior shifts above prior mean. |
+| **Phase 2: Ablation Baselines** | Compare against fixed equal weights and hand-designed weight functions | Hierarchical inference outperforms static baselines on model selection metrics |
+| **Phase 3: OOD Robustness** | Extrapolation under extreme parameters (very low \(q\), near-extremal spin) | DP-BSR remains physically bounded while pure numerical fits oscillate or diverge |
+| **Phase 4: GW BBH Final State** | Predict \(M_f, \chi_f, \omega_{\text{QNM}}\) from SXS/RIT/BAM catalog data | Interpretable closed-form expressions; OOD generalization to unseen NR parameters |
+
+## Directory Structure
 
 ```
-
+experiments/
+├── run.py                      # Single experiment runner
+├── sweep.py                    # Hyperparameter sweep over σ, N
+├── configs/
+│   ├── phase1_synthetic.yaml   # Synthetic data calibration
+│   ├── phase2_ablation.yaml    # Ablation: hierarchical vs. flat vs. hand-designed
+│   ├── phase3_ood.yaml         # OOD extrapolation stress test
+│   └── phase4_gw_merger.yaml   # GW BBH final state application
+└── logs/
+    └── ...
+```
