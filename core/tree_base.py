@@ -284,6 +284,7 @@ class TreeBase:
                                                               vpreturn=True)
         self.__init__(ops=self.ops, prior_par=self.prior_par,
                       x=self.x, y=self.y, BT=self.BT, PT=self.PT,
+                      max_size=self.max_size,
                       parameters=parameters, variables=variables)
         self.__grow_tree(self.root, tlist[0], tlist[1])
         self.get_sse(verbose=verbose)

@@ -448,7 +448,7 @@ t_viz = Tree(
     x=x_viz, y=y_viz,
     prior_par=dict([('Nopi_%s' % op, 1.0) for op in OPS]),
     max_size=10,
-    from_string='(x0 + _a0_)',  # start from sane init to avoid complex-valued expressions
+    from_string='((x0 * _a0_) + _a1_)',  # init that can represent y = a0*x + a1
 )
 trace_fn_viz = '/tmp/test_viz_trace.dat'
 progress_fn_viz = '/tmp/test_viz_progress.dat'
