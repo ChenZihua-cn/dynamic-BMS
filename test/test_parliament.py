@@ -327,3 +327,89 @@ class TestMCMCWithParliament:
         # (50 steps may not accept if initial formula is already optimal)
         assert np.isfinite(float(t.E)), "Final t.E is inf"
         assert np.isfinite(float(t.EP)), "Final t.EP is inf"
+
+
+# ============================================================================
+# Test 11: Parliament delta in dE_lr, dE_rr (direct, not just MCMC)
+# ============================================================================
+
+class TestParliamentProposalGate:
+    """Parliament structural delta in dE_lr and dE_rr (prune + replace)."""
+
+    def test_dE_lr_parliament_delta(self):
+        """dE_lr with OccamPrior: leaf-to-leaf swap, parliament delta = 0."""
+        t = Tree(variables=['x'], parameters=['a'],
+                parliaments=[OccamPrior()],
+                from_string='(_a0_ * x)', max_size=30)
+        x_node = [n for n in t.nodes if n.value == 'x'][0]
+        before = str(t)
+
+        dE, _, dEP, _ = t.dE_lr(x_node, 'sin')
+        assert np.isfinite(dE)
+        assert str(t) == before
+        assert np.isfinite(dEP)
+
+    def test_dE_lr_with_constitution_and_parliament(self):
+        """dE_lr replacing * → +: constitution passes, parliament delta = 0."""
+        dims = {'x': (1, 0, 0, 0, 0, 0, 0)}
+        t = Tree(variables=['x'], parameters=['a'],
+                 dimensions=dims,
+                 constitutions=[DimensionalConstitution()],
+                 parliaments=[OccamPrior()],
+                 from_string='(_a0_ * x)', max_size=30)
+        mul_node = [n for n in t.nodes if n.value == '*'][0]
+        before = str(t)
+
+        dE, _, _, _ = t.dE_lr(mul_node, '+')
+        assert np.isfinite(dE)
+        assert str(t) == before
+
+    def test_dE_rr_prune_parliament_delta(self):
+        """dE_rr prune with OccamPrior: size decreases, dEP should show it."""
+        dims = {'L': (1, 0, 0, 0, 0, 0, 0)}
+        t = Tree(variables=['L'], parameters=['a'],
+                 dimensions=dims,
+                 constitutions=[DimensionalConstitution()],
+                 parliaments=[OccamPrior()],
+                 from_string='(_a0_ + L)', max_size=30)
+        assert t.is_root_prunable()
+        before = str(t)
+        old_size = t.size
+
+        dE, _, dEP, _ = t.dE_rr(rr=None)
+        assert np.isfinite(dE)
+        assert str(t) == before
+        assert t.size == old_size  # reverted
+
+    def test_dE_rr_replace_parliament_delta(self):
+        """dE_rr replace with OccamPrior: adding root increases dEP."""
+        dims = {'L': (1, 0, 0, 0, 0, 0, 0),
+                'g': (1, 0, -2, 0, 0, 0, 0)}
+        t = Tree(variables=['L', 'g'], parameters=['a', 'b'],
+                 dimensions=dims,
+                 constitutions=[DimensionalConstitution()],
+                 parliaments=[OccamPrior()],
+                 from_string='sqrt((L / g))', max_size=30)
+        before = str(t)
+
+        dE, _, _, _ = t.dE_rr(rr=['*', ['_b0_']])
+        assert np.isfinite(dE)
+        assert str(t) == before
+
+    def test_canonical_reject_skips_parliament_delta(self):
+        """Canonical reject: dE=inf, parliament delta NOT applied, EP unchanged."""
+        t = Tree(variables=['x'], parameters=['a'],
+                 parliaments=[OccamPrior()],
+                 from_string='(_a0_ * x)', max_size=30)
+        old_E, old_EP = t.E, t.EP
+
+        orig_update = t.update_representative
+        t.update_representative = lambda verbose=False: -1
+        try:
+            x_node = [n for n in t.nodes if n.value == 'x'][0]
+            dE, _, _, _, _, _ = t.dE_et(x_node, ['sin', ['x']])
+            assert np.isinf(dE)
+            assert t.EP == old_EP
+            assert t.E == old_E
+        finally:
+            t.update_representative = orig_update

@@ -758,3 +758,65 @@ class TestMCMCIntegration:
         # EP should remain finite
         _, _, EP = tree.get_energy()
         assert not np.isnan(EP)
+
+
+# ============================================================================
+# fixed_term dimensional consistency tests
+# ============================================================================
+
+class TestFixedTermDimensional:
+    """DimensionalConstitution.check() with fixed_term expressions."""
+
+    def test_fixed_term_valid_dimensionless(self):
+        """Main tree + dimensionless fixed_term via *: should pass."""
+        const = DimensionalConstitution()
+        tree = Tree(
+            variables=['L', 'g', 'theta0'],
+            parameters=['a', 'b'],
+            dimensions=PENDULUM_DIMS,
+            constitutions=[const],
+            from_string='(_a0_ * sqrt((L / g)))',
+            fixed_term='(_b0_ * theta0)',
+            fixed_term_op='*',
+        )
+        result = const.check(tree)
+        assert result.is_valid, f"Should be valid but got: {result.failures}"
+
+    def test_fixed_term_valid_same_dim(self):
+        """Main tree + same-dimension fixed_term via +: should pass."""
+        const = DimensionalConstitution()
+        tree = Tree(
+            variables=['L', 'g'],
+            parameters=['a', 'b', 'c'],
+            dimensions=PENDULUM_DIMS,
+            constitutions=[const],
+            from_string='(_a0_ * sqrt((L / g)))',
+            fixed_term='(_b0_ * sqrt((L / g)))',
+            fixed_term_op='+',
+        )
+        result = const.check(tree)
+        assert result.is_valid, f"Should be valid but got: {result.failures}"
+
+    def test_fixed_term_invalid_dim_mismatch(self):
+        """Parameter-free T^2 + L → unsolvable constraint → ValueError."""
+        const = DimensionalConstitution()
+        with pytest.raises(ValueError, match="dimensional constraints"):
+            Tree(
+                variables=['L', 'g'],
+                parameters=[],
+                dimensions=PENDULUM_DIMS,
+                constitutions=[const],
+                from_string='(L / g)',
+                fixed_term='L',
+                fixed_term_op='+',
+            )
+
+    def test_fixed_term_none_passes(self):
+        """fixed_term=None falls through to regular check."""
+        const = DimensionalConstitution()
+        tree = Tree(
+            variables=['L', 'g'], parameters=['a'],
+            dimensions=PENDULUM_DIMS, constitutions=[const],
+            from_string='(_a0_ * sqrt((L / g)))',
+        )
+        assert const.check(tree).is_valid

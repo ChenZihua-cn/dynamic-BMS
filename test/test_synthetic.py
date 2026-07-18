@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import pandas as pd
 import numpy as np
 from core import Tree, OPS
-from helpers import r2_score
+from test.helpers import r2_score
 
 PASS, FAIL = 0, 0
 
@@ -158,8 +158,9 @@ def test_quadratic():
 def test_trig():
     res = run_synthetic_test("Trig y=sin(2x)", ground_sin, ['x0'],
                              n_train=40, noise=0.1, burnin=800, thin=20, samples=100)
-    if res['test_r2'] < 0.5:
-        print("[WARN] Trig R^2={:.4f} below threshold (may need longer chain)".format(res['test_r2']))
+    assert res['test_r2'] > 0.3, \
+        "Trig test_r2={:.4f} <= 0.3 -- model failed to learn sin(2x)".format(
+            res['test_r2'])
 
 
 @t("Rational y=x/(1+x^2)")
@@ -174,8 +175,9 @@ def test_2var():
     res = run_synthetic_test("2-Var y=3x0-2x1+5", ground_2var, ['x0', 'x1'],
                              n_train=60, noise=0.2, burnin=2000, thin=20, samples=200,
                              max_size=12)
-    if res['test_r2'] < 0.4:
-        print("[WARN] 2-Var R^2={:.4f} below threshold (may overfit)".format(res['test_r2']))
+    assert res['test_r2'] > 0.3, \
+        "2-Var test_r2={:.4f} <= 0.3 -- model failed to learn 3x0-2x1+5".format(
+            res['test_r2'])
 
 
 @t("3-Var y=x0*x1+x2")
@@ -183,8 +185,9 @@ def test_3var_interact():
     res = run_synthetic_test("3-Var y=x0*x1+x2", ground_3var_interact, ['x0', 'x1', 'x2'],
                              n_train=80, noise=0.3, burnin=2000, thin=20, samples=200,
                              max_size=20)
-    if res['test_r2'] < 0.3:
-        print("[WARN] 3-Var interaction R^2={:.4f} below threshold".format(res['test_r2']))
+    assert res['test_r2'] > 0.15, \
+        "3-Var interaction test_r2={:.4f} <= 0.15 -- model failed to learn x0*x1+x2".format(
+            res['test_r2'])
 
 
 @t("3-Var y=x0*x1/(1+x2^2)")
@@ -192,8 +195,9 @@ def test_3var_rational():
     res = run_synthetic_test("3-Var y=x0*x1/(1+x2^2)", ground_3var_rat, ['x0', 'x1', 'x2'],
                              n_train=80, noise=0.15, burnin=2000, thin=20, samples=200,
                              max_size=20)
-    if res['test_r2'] < 0.3:
-        print("[WARN] 3-Var rational R^2={:.4f} below threshold".format(res['test_r2']))
+    assert res['test_r2'] > 0.1, \
+        "3-Var rational test_r2={:.4f} <= 0.1 -- model failed to learn x0*x1/(1+x2^2)".format(
+            res['test_r2'])
 
 
 @t("3-Var y=sin(x0)+x1*exp(-x2^2)")
@@ -201,8 +205,9 @@ def test_3var_mixed():
     res = run_synthetic_test("3-Var y=sin(x0)+x1*exp(-x2^2)", ground_3var_mix, ['x0', 'x1', 'x2'],
                              n_train=80, noise=0.2, burnin=2000, thin=20, samples=200,
                              max_size=20)
-    if res['test_r2'] < 0.2:
-        print("[WARN] 3-Var mixed R^2={:.4f} below threshold".format(res['test_r2']))
+    assert res['test_r2'] > 0.05, \
+        "3-Var mixed test_r2={:.4f} <= 0.05 -- model failed to learn sin(x0)+x1*exp(-x2^2)".format(
+            res['test_r2'])
 
 
 @t("Exp y=exp(-x^2)")

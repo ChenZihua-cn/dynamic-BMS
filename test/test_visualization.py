@@ -34,7 +34,7 @@ def t(name):
 # 15. Visualization (matplotlib)
 # ---------------------------------------------------------------------------
 
-@t("BIC/Energy trace plots saved")
+@t("BIC/Energy trace data is finite and non-constant")
 def test_trace_plots():
     np.random.seed(7)
     x = pd.DataFrame({'x0': np.linspace(-2, 2, 40)})
@@ -61,6 +61,19 @@ def test_trace_plots():
             bic_trace.append(rec[1])
             E_trace.append(rec[2])
 
+    # Assertions on trace data
+    assert len(bic_trace) == 50, \
+        f"Expected 50 trace samples, got {len(bic_trace)}"
+    assert np.all(np.isfinite(bic_trace)), \
+        "BIC trace contains non-finite values"
+    assert np.all(np.isfinite(E_trace)), \
+        "Energy trace contains non-finite values"
+    assert np.std(bic_trace) > 0, \
+        "BIC trace is constant -- no exploration occurred"
+    assert np.std(E_trace) > 0, \
+        "Energy trace is constant -- no exploration occurred"
+
+    # Save plot for visual inspection
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     ax1.plot(bic_trace)
     ax1.set_xlabel('MCMC sample')
@@ -75,7 +88,7 @@ def test_trace_plots():
     plt.close(fig)
 
 
-@t("Predictions-vs-actual plot saved")
+@t("Predictions-vs-actual: finite, correct length, positive correlation")
 def test_pred_vs_actual_plot():
     np.random.seed(7)
     x = pd.DataFrame({'x0': np.linspace(-2, 2, 40)})
@@ -96,6 +109,18 @@ def test_pred_vs_actual_plot():
            verbose=False, progress=False)
 
     ypred = t.predict(x)
+
+    # Assertions on predictions
+    assert isinstance(ypred, pd.Series)
+    assert len(ypred) == len(x), \
+        f"Prediction length {len(ypred)} != input length {len(x)}"
+    assert np.all(np.isfinite(ypred.values)), \
+        "Predictions contain non-finite values"
+    corr = np.corrcoef(ypred.values, y.values)[0, 1]
+    assert corr > 0.5, \
+        f"Correlation between predictions and actual is only {corr:.4f}"
+
+    # Save plot for visual inspection
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.scatter(ypred, y, alpha=0.7)
     lo = min(y.min(), ypred.min())

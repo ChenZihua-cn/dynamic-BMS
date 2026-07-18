@@ -29,21 +29,35 @@ def t(name):
 # 6. MCMC step on empty data (no crash)
 # ---------------------------------------------------------------------------
 
-@t("5 MCMC steps on no-data tree")
+@t("MCMC step without data maintains tree invariants")
 def test_mcmc_step_no_data():
+    np.random.seed(42)
     t = Tree(
         prior_par=dict([('Nopi_%s' % op, 0) for op in OPS]),
         from_string='(x + _a0_)'
     )
-    for _ in range(5):
-        t.mcmc_step()
+    initial_str = str(t)
+
+    for i in range(5):
+        t.mcmc_step(verbose=False)
+        assert 1 <= t.size <= t.max_size, \
+            f"Step {i}: tree size {t.size} out of [1, {t.max_size}]"
+        assert np.isfinite(float(t.E)), \
+            f"Step {i}: energy is not finite: {t.E}"
+        assert np.isfinite(float(t.bic)), \
+            f"Step {i}: BIC is not finite: {t.bic}"
+
+    # After 5 steps the tree should have changed
+    final_str = str(t)
+    assert final_str != initial_str, \
+        f"Tree did not change after 5 MCMC steps: expr={final_str}"
 
 
 # ---------------------------------------------------------------------------
 # 7. Tree with data: build and run a few MCMC steps
 # ---------------------------------------------------------------------------
 
-@t("MCMC steps with data")
+@t("MCMC steps with data: energy and BIC remain finite, tree evolves")
 def test_mcmc_step_with_data():
     np.random.seed(42)
     x = pd.DataFrame({'x0': np.linspace(0, 10, 20)})
@@ -56,17 +70,32 @@ def test_mcmc_step_with_data():
         prior_par=dict([('Nopi_%s' % op, 1.0) for op in OPS]),
         max_size=10,
     )
-    for _ in range(10):
+    initial_E = t.E
+    initial_str = str(t)
+
+    for i in range(10):
         t.mcmc_step(verbose=False)
-    # Should not crash and tree should have evolved
-    assert t.size > 0
+        assert 1 <= t.size <= t.max_size, \
+            f"Step {i}: tree size {t.size} out of [1, {t.max_size}]"
+        assert np.isfinite(float(t.E)), \
+            f"Step {i}: energy is not finite: {t.E}"
+        assert np.isfinite(float(t.bic)), \
+            f"Step {i}: BIC is not finite: {t.bic}"
+
+    # MCMC should have explored: either the expression changed
+    final_str = str(t)
+    assert final_str != initial_str, \
+        f"Tree did not evolve after 10 MCMC steps with data"
+    # Energy should not increase substantially on simple linear data
+    assert t.E <= initial_E + 1.0, \
+        f"Energy increased substantially: initial={initial_E:.4f}, final={t.E:.4f}"
 
 
 # ---------------------------------------------------------------------------
 # 8. Predict
 # ---------------------------------------------------------------------------
 
-@t("predict() returns pd.Series")
+@t("predict() returns finite values with correct shape")
 def test_predict():
     np.random.seed(42)
     x = pd.DataFrame({'x0': np.linspace(0, 10, 20)})
@@ -82,8 +111,21 @@ def test_predict():
     for _ in range(10):
         t.mcmc_step(verbose=False)
 
+    # Predict on training data
     ypred = t.predict(x)
     assert isinstance(ypred, pd.Series)
+    assert len(ypred) == len(x), \
+        f"Prediction length {len(ypred)} != input length {len(x)}"
+    assert np.all(np.isfinite(ypred.values)), \
+        "Predictions contain non-finite values"
+    assert ypred.nunique() > 1, \
+        "Predictions are constant -- model is trivial or broken"
+
+    # Predict on test data with different length
+    x_test = pd.DataFrame({'x0': np.linspace(0, 10, 5)})
+    ypred_test = t.predict(x_test)
+    assert len(ypred_test) == 5
+    assert np.all(np.isfinite(ypred_test.values))
 
 
 # ---------------------------------------------------------------------------
