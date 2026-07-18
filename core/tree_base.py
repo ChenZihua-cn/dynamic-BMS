@@ -112,6 +112,7 @@ class TreeBase:
         self.PT = float(PT)
         # Dimension declarations and expert system
         self.dimensions = dimensions or {}
+        self.parliaments = []  # default; GateMixin._init_gate overwrites
         if hasattr(self, '_init_experts'):
             self._init_experts(constitutions, parliaments)
         # Build from string

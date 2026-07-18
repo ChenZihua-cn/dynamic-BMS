@@ -2,6 +2,7 @@
 
 from .base import ExpertMixin
 from .constitution.base import ConstitutionBase
+from .parliament.base import ParliamentBase
 from .constitution.dimensional import (
     DimExpr,
     DIM_NAMES,
@@ -17,6 +18,7 @@ from .constitution.dimensional import (
 __all__ = [
     'ExpertMixin',
     'ConstitutionBase',
+    'ParliamentBase',
     'DimExpr',
     'DIM_NAMES',
     'OP_DIM_RULES',

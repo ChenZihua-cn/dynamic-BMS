@@ -151,6 +151,9 @@ class EnergyMixin:
                 EP += self.prior_par['Nopi2_%s' % op] * nop**2
             except KeyError:
                 pass
+        # Parliament structural penalty (Phase 1: structural only)
+        if self.parliaments:
+            EP += self._parliament_energy_structural()
         # Reset the value, if necessary
         if reset:
             self.EB = EB

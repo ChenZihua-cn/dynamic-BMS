@@ -10,6 +10,7 @@ solution for all 7 dimension indices independently.
 from fractions import Fraction
 from dataclasses import dataclass, field
 
+from core.node import Node
 from .base import ConstitutionBase
 
 
@@ -518,6 +519,37 @@ def check_dimensional_consistency(root, known_dims, param_set=None):
 # Constitution expert
 # ---------------------------------------------------------------------------
 
+def _parse_list_to_node(parsed):
+    """Convert a ``__parse_recursive`` parse list to a ``Node`` tree.
+
+    ``TreeBase.__parse_recursive`` returns a nested list in the form
+    ``[op, [child_list, ...]]`` where each child is itself a parse list.
+    This helper converts that representation into a ``Node`` tree so it
+    can be fed directly to ``collect_constraints``.
+    """
+    op, children = parsed
+    return Node(value=op, offspring=[_parse_list_to_node(c) for c in children])
+
+
+def _parse_bms_to_node(string, tree):
+    """Parse a BMS expression string into a Node tree.
+
+    **Refactored (2026-07-18):** Previously this function duplicated the
+    full BMS parsing state machine from ``TreeBase.__parse_recursive``
+    (~40 lines of identical character-by-character logic). The only
+    difference was the output format — ``__parse_recursive`` returns a
+    parse list ``[op, [child, ...]]`` while the old code returned a
+    ``Node`` tree directly.
+
+    Now delegates to ``TreeBase.__parse_recursive`` for parsing and
+    converts the parse list via ``_parse_list_to_node``. This eliminates
+    the need to keep two parsers in sync when the BMS syntax evolves
+    (e.g. adding new operators).
+    """
+    parsed_list = tree._TreeBase__parse_recursive(string)
+    return _parse_list_to_node(parsed_list)
+
+
 class DimensionalConstitution(ConstitutionBase):
     """Hard constraint: reject dimensionally inconsistent expression trees.
 
@@ -532,4 +564,15 @@ class DimensionalConstitution(ConstitutionBase):
         param_set = set(getattr(tree, 'parameters', []))
         if hasattr(tree, 'fixed_parameters'):
             param_set |= set(tree.fixed_parameters)
-        return check_dimensional_consistency(tree.root, known_dims, param_set)
+
+        if getattr(tree, 'fixed_term', None) is None:
+            return check_dimensional_consistency(tree.root, known_dims,
+                                                 param_set)
+
+        # Parse fixed_term and combine with main tree via fixed_term_op.
+        # Overall formula: (main_tree) fixed_term_op (fixed_term)
+        fixed_root = _parse_bms_to_node(tree.fixed_term, tree)
+        combined_root = Node(value=tree.fixed_term_op,
+                             offspring=[tree.root, fixed_root])
+        return check_dimensional_consistency(combined_root, known_dims,
+                                             param_set)

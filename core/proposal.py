@@ -244,6 +244,9 @@ a tuple [node_value, [list, of, offspring, values]].
         old = [target.value, [o.value for o in target.offspring]]
         old_bic, old_sse, old_energy = self.bic, deepcopy(self.sse), self.E
         old_par_values = deepcopy(self.par_values)
+        # === Parliament: capture structural penalty (OLD state) ===
+        _parl_old = self._capture_parliament_structural()
+
         added = self.et_replace(target, new, update_gof=False, verbose=verbose)
         # number of possible move types from final
         nfi = sum([int(len(self.ets[oi]) > 0 and
@@ -263,6 +266,8 @@ a tuple [node_value, [list, of, offspring, values]].
             self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
             self.par_values = old_par_values
             return np.inf, np.inf, np.inf, deepcopy(self.par_values), nif, nfi
+        # === Parliament: structural delta (tree in NEW state, before revert) ===
+        dEP += self._parliament_structural_delta(_parl_old)
         # leave the whole thing as it was before the back & fore
         self.et_replace(added, old, update_gof=False, verbose=verbose)
         self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
@@ -330,6 +335,9 @@ a tuple [node_value, [list, of, offspring, values]].
             old = target.value
             old_bic, old_sse, old_energy = self.bic, deepcopy(self.sse), self.E
             old_par_values = deepcopy(self.par_values)
+            # === Parliament: capture structural penalty (OLD state) ===
+            _parl_old = self._capture_parliament_structural()
+
             target.value = new
             try:
                 self.nops[old] -= 1
@@ -355,6 +363,8 @@ a tuple [node_value, [list, of, offspring, values]].
                 self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
                 self.par_values = old_par_values
                 return np.inf, np.inf, np.inf, None
+            # === Parliament: structural delta (tree in NEW state, before revert) ===
+            dEP += self._parliament_structural_delta(_parl_old)
             # leave the whole thing as it was before the back & fore
             target.value = old
             try:
@@ -432,6 +442,9 @@ a tuple [node_value, [list, of, offspring, values]].
             old_par_values = deepcopy(self.par_values)
             oldrr = [self.root.value,
                      [o.value for o in self.root.offspring[1:]]]
+            # === Parliament: capture structural penalty (OLD state) ===
+            _parl_old = self._capture_parliament_structural()
+
             self.prune_root(update_gof=False, verbose=verbose)
             # === merged gate: constitution + canonical ===
             gate_failed = False
@@ -447,6 +460,8 @@ a tuple [node_value, [list, of, offspring, values]].
                 self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
                 self.par_values = old_par_values
                 return np.inf, np.inf, np.inf, deepcopy(self.par_values)
+            # === Parliament: structural delta (tree in NEW state, before revert) ===
+            dEP += self._parliament_structural_delta(_parl_old)
             # leave the whole thing as it was before the back & fore
             self.replace_root(rr=oldrr, update_gof=False, verbose=verbose)
             self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
@@ -495,6 +510,9 @@ a tuple [node_value, [list, of, offspring, values]].
             # replace
             old_bic, old_sse, old_energy = self.bic, deepcopy(self.sse), self.E
             old_par_values = deepcopy(self.par_values)
+            # === Parliament: capture structural penalty (OLD state) ===
+            _parl_old = self._capture_parliament_structural()
+
             newroot = self.replace_root(rr=rr, update_gof=False,
                                         verbose=verbose)
             if newroot == None: # Root cannot be replaced (due to max_size)
@@ -513,6 +531,8 @@ a tuple [node_value, [list, of, offspring, values]].
                 self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
                 self.par_values = old_par_values
                 return np.inf, np.inf, np.inf, deepcopy(self.par_values)
+            # === Parliament: structural delta (tree in NEW state, before revert) ===
+            dEP += self._parliament_structural_delta(_parl_old)
             # leave the whole thing as it was before the back & fore
             self.prune_root(update_gof=False, verbose=verbose)
             self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy

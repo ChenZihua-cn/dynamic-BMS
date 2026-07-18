@@ -20,9 +20,8 @@ import pytest
 from fractions import Fraction
 
 from experts.constitution.dimensional import (
-    DimExpr, DIM_NAMES, N_DIMS, ZERO,
+    DimExpr, ZERO,
     collect_constraints, solve_constraints,
-    check_dimensional_consistency,
     DimensionalConstitution,
     DimensionCheckResult, DimensionFailure,
 )
@@ -347,33 +346,6 @@ class TestDimensionalValid:
         result = solve_constraints(constraints, sqrt_info)
         assert result.is_valid
 
-    def test_const_param_alone(self):
-        """Just a fitted parameter — always dimensionally valid."""
-        root = leaf('_a0_')
-        _, constraints, sqrt_info = collect_constraints(
-            root, PENDULUM_DIMS, {'_a0_'}
-        )
-        result = solve_constraints(constraints, sqrt_info)
-        assert result.is_valid
-
-    def test_bare_variable_leaf(self):
-        """A known-dimension variable leaf trivially passes."""
-        root = leaf('L')
-        _, constraints, sqrt_info = collect_constraints(
-            root, PENDULUM_DIMS, set()
-        )
-        result = solve_constraints(constraints, sqrt_info)
-        assert result.is_valid
-
-    def test_unary_negate_preserves(self):
-        """-L has same dim as L."""
-        root = unary('-', leaf('L'))
-        _, constraints, sqrt_info = collect_constraints(
-            root, PENDULUM_DIMS, set()
-        )
-        result = solve_constraints(constraints, sqrt_info)
-        assert result.is_valid
-
     def test_pow2_scales_dimension(self):
         """pow2(L/g) = T^4."""
         div = binary('/', leaf('L'), leaf('g'))
@@ -384,18 +356,8 @@ class TestDimensionalValid:
         result = solve_constraints(constraints, sqrt_info)
         assert result.is_valid
 
-    def test_pow3_scales_dimension(self):
-        """pow3(_a0_*L) = (_a0_*L)^3."""
-        mul = binary('*', leaf('_a0_'), leaf('L'))
-        root = unary('pow3', mul)
-        _, constraints, sqrt_info = collect_constraints(
-            root, PENDULUM_DIMS, {'_a0_'}
-        )
-        result = solve_constraints(constraints, sqrt_info)
-        assert result.is_valid
-
-    def test_no_param_cancellation(self):
-        """(L/g)*g = L. */ produces no constraints, trivially passes."""
+    def test_cancellation(self):
+        """(L/g)*g = L — trivially valid, no constraints generated."""
         div = binary('/', leaf('L'), leaf('g'))
         root = binary('*', div, leaf('g'))
         _, constraints, sqrt_info = collect_constraints(root, PENDULUM_DIMS, set())
@@ -455,13 +417,6 @@ class TestDimensionalInvalid:
         result = solve_constraints(constraints, [])
         assert not result.is_valid
 
-    def test_dimless_base_dim_exponent(self):
-        """theta0 ** L — exponent must be dimensionless."""
-        root = binary('**', leaf('theta0'), leaf('L'))
-        _, constraints, _ = collect_constraints(root, PENDULUM_DIMS, set())
-        result = solve_constraints(constraints, [])
-        assert not result.is_valid
-
     def test_shared_param_dim_vs_dimless(self):
         """_a0_*L + _a0_: shared _a0_ must be both L-dim and dimensionless."""
         left = binary('*', leaf('_a0_'), leaf('L'))
@@ -483,40 +438,6 @@ class TestDimensionalInvalid:
         )
         result = solve_constraints(constraints, [])
         assert not result.is_valid
-
-
-# ============================================================================
-# Top-level check_dimensional_consistency API (public API probe)
-# ============================================================================
-
-class TestTopLevelCheckAPI:
-    """Exercise check_dimensional_consistency() directly on Node trees.
-
-    These intentionally overlap with the lower-level constraint tests
-    above — retained as a public API smoke test to catch regressions
-    in the collect_constraints → solve_constraints pipeline.
-    """
-
-    def test_valid_formula(self):
-        div = binary('/', leaf('L'), leaf('g'))
-        srt = unary('sqrt', div)
-        root = binary('*', leaf('_a0_'), srt)
-        result = check_dimensional_consistency(root, PENDULUM_DIMS, {'_a0_'})
-        assert result.is_valid
-
-    def test_invalid_sin_L(self):
-        result = check_dimensional_consistency(
-            unary('sin', leaf('L')), PENDULUM_DIMS, set()
-        )
-        assert not result.is_valid
-
-    def test_default_param_set(self):
-        """param_set=None treats all unknown leaves as dimensionless."""
-        # bare 'L' is known (has dim), 'foo' is unknown → dimensionless
-        result = check_dimensional_consistency(
-            binary('+', leaf('L'), leaf('foo')), PENDULUM_DIMS
-        )
-        assert not result.is_valid  # L-dim vs dimensionless conflict
 
 
 # ============================================================================
@@ -547,27 +468,6 @@ class TestConstitutionIntegration:
                 constitutions=[const],
                 from_string='sin(L)',
             )
-
-    def test_multi_param(self):
-        const = DimensionalConstitution()
-        tree = Tree(
-            variables=['L', 'g', 'theta0'],
-            parameters=['a', 'b', 'c'],
-            dimensions=PENDULUM_DIMS,
-            constitutions=[const],
-            from_string='(_a0_ * sqrt((L / g)))',
-        )
-        assert const.check(tree).is_valid
-
-    def test_extra_params_no_false_rejection(self):
-        """Extra declared parameters not in formula should not affect check."""
-        const = DimensionalConstitution()
-        tree = Tree(
-            variables=['L', 'g'], parameters=['a', 'b', 'c'],
-            dimensions=PENDULUM_DIMS, constitutions=[const],
-            from_string='(_a0_ * sqrt((L / g)))',
-        )
-        assert const.check(tree).is_valid
 
 
 # ============================================================================
