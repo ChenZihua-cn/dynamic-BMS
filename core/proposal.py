@@ -249,9 +249,15 @@ a tuple [node_value, [list, of, offspring, values]].
         nfi = sum([int(len(self.ets[oi]) > 0 and
                        (self.size + of - oi) <= self.max_size)
                    for oi, of in self.move_types])
-        # check/update canonical representative
-        rep_res = self.update_representative(verbose=verbose)
-        if rep_res == -1:
+        # === merged gate: constitution + canonical ===
+        gate_failed = False
+        if hasattr(self, 'check_constitution') and \
+           not self.check_constitution():
+            gate_failed = True
+        elif self.update_representative(verbose=verbose) == -1:
+            gate_failed = True
+
+        if gate_failed:
             # this formula is forbidden
             self.et_replace(added, old, update_gof=False, verbose=verbose)
             self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
@@ -330,9 +336,15 @@ a tuple [node_value, [list, of, offspring, values]].
                 self.nops[new] += 1
             except KeyError:
                 pass
-            # check/update canonical representative
-            rep_res = self.update_representative(verbose=verbose)
-            if rep_res == -1:
+            # === merged gate: constitution + canonical ===
+            gate_failed = False
+            if hasattr(self, 'check_constitution') and \
+               not self.check_constitution():
+                gate_failed = True
+            elif self.update_representative(verbose=verbose) == -1:
+                gate_failed = True
+
+            if gate_failed:
                 # this formula is forbidden
                 target.value = old
                 try:
@@ -421,9 +433,15 @@ a tuple [node_value, [list, of, offspring, values]].
             oldrr = [self.root.value,
                      [o.value for o in self.root.offspring[1:]]]
             self.prune_root(update_gof=False, verbose=verbose)
-            # check/update canonical representative
-            rep_res = self.update_representative(verbose=verbose)
-            if rep_res == -1:
+            # === merged gate: constitution + canonical ===
+            gate_failed = False
+            if hasattr(self, 'check_constitution') and \
+               not self.check_constitution():
+                gate_failed = True
+            elif self.update_representative(verbose=verbose) == -1:
+                gate_failed = True
+
+            if gate_failed:
                 # this formula is forbidden
                 self.replace_root(rr=oldrr, update_gof=False, verbose=verbose)
                 self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy
@@ -481,9 +499,15 @@ a tuple [node_value, [list, of, offspring, values]].
                                         verbose=verbose)
             if newroot == None: # Root cannot be replaced (due to max_size)
                 return np.inf, np.inf, np.inf, deepcopy(self.par_values)
-            # check/update canonical representative
-            rep_res = self.update_representative(verbose=verbose)
-            if rep_res == -1:
+            # === merged gate: constitution + canonical ===
+            gate_failed = False
+            if hasattr(self, 'check_constitution') and \
+               not self.check_constitution():
+                gate_failed = True
+            elif self.update_representative(verbose=verbose) == -1:
+                gate_failed = True
+
+            if gate_failed:
                 # this formula is forbidden
                 self.prune_root(update_gof=False, verbose=verbose)
                 self.bic, self.sse, self.E = old_bic, deepcopy(old_sse), old_energy

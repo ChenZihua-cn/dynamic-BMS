@@ -1,4 +1,6 @@
 .vscode/
 core/__pycache__
+experts/__pycache__
+experts/constitution/__pycache__
 *.dat
 *:Zone.Identifier

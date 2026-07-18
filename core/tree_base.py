@@ -20,6 +20,7 @@ class TreeBase:
                  max_size=50,
                  root_value=None, from_string=None,
                  fixed_term=None, fixed_term_op='*', extra_variables=[],
+                 dimensions=None, constitutions=None, parliaments=None,
                  ):
         # The variables and parameters
         self.variables = variables
@@ -109,6 +110,10 @@ class TreeBase:
         # BIC and prior temperature
         self.BT = float(BT)
         self.PT = float(PT)
+        # Dimension declarations and expert system
+        self.dimensions = dimensions or {}
+        if hasattr(self, '_init_experts'):
+            self._init_experts(constitutions, parliaments)
         # Build from string
         if from_string != None:
             self.build_from_string(from_string)
@@ -285,8 +290,19 @@ class TreeBase:
         self.__init__(ops=self.ops, prior_par=self.prior_par,
                       x=self.x, y=self.y, BT=self.BT, PT=self.PT,
                       max_size=self.max_size,
-                      parameters=parameters, variables=variables)
+                      parameters=parameters, variables=variables,
+                      dimensions=self.dimensions,
+                      constitutions=self.constitutions
+                          if hasattr(self, 'constitutions') else None,
+                      parliaments=self.parliaments
+                          if hasattr(self, 'parliaments') else None)
         self.__grow_tree(self.root, tlist[0], tlist[1])
+        # Constitution verification (one-shot after full tree construction)
+        if hasattr(self, 'check_constitution') and \
+           not self.check_constitution():
+            raise ValueError(
+                f"Expression '{string}' violates dimensional constraints."
+            )
         self.get_sse(verbose=verbose)
         self.get_bic(verbose=verbose)
         self.fit_par = {}  # Forget all values fitted so far
