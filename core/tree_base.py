@@ -292,6 +292,9 @@ class TreeBase:
                       x=self.x, y=self.y, BT=self.BT, PT=self.PT,
                       max_size=self.max_size,
                       parameters=parameters, variables=variables,
+                      fixed_term=self.fixed_term,
+                      fixed_term_op=self.fixed_term_op,
+                      extra_variables=self.extra_variables,
                       dimensions=self.dimensions,
                       constitutions=self.constitutions
                           if hasattr(self, 'constitutions') else None,
