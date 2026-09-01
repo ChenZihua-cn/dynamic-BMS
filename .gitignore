@@ -3,6 +3,8 @@ core/__pycache__
 experts/__pycache__
 experts/constitution/__pycache__
 experts/parliament/__pycache__
+experiments/__pycache__
+experiments/data/__pycache__
 test/__pycache__
 gate/__pycache__
 .pytest_cache
