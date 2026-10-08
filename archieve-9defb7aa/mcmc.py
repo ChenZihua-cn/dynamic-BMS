@@ -270,6 +270,19 @@ class Tree():
     # -------------------------------------------------------------------------
     def latex(self):
         return latex(sympify(self.canonical()))
+        
+    # ------------------------------------------------------------------------- 
+    def latex_val(self, num_digits=1):
+        cansp = sympify(str(self).replace('_', ''))
+        cansp = simplify(cansp)
+        cansp = cansp.subs(dict([
+            (str(p).replace('_', ''), v)
+            for p, v in self.par_values['d0'].items()
+        ]))
+        cansp = simplify(cansp)
+        return latex(cansp.xreplace(
+            {n : round(n, num_digits) for n in cansp.atoms(Number)}
+        ))
     
     # -------------------------------------------------------------------------
     def __parse_recursive(self, string, variables=None, parameters=None,
