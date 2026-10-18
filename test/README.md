@@ -1,101 +1,117 @@
-# Test Suite Overview
+# 实验手册 (test/)
 
-## Files
+这里不是软件单元测试，而是**物理实验**：每个 `test_*` 函数是一项实验——
+有物理假设、测量量、期望值与容差。实验运行时输出实验记录（测量值、偏差、
+判定），用 pytest 查看结果，用 `python test/xx.py` 或 `pytest -s` 查看记录。
 
-| File | Style | Tests | Focus |
-|------|-------|-------|-------|
-| [test_core_basics.py](test_core_basics.py) | decorator `@t()` | 9 | Core import, Node, Tree init, canonical form (param rename, idempotence, commutation, distinctness) |
-| [test_asymptotic.py](test_asymptotic.py) | pytest classes | 16 | AsymptoticPrior expert: unit, ideal gas, multi-expert weighted combo, MCMC regression |
-| [test_dimensional.py](test_dimensional.py) | decorator `@t()` | 18 | DimExpr algebra, constraint collection, dimensional consistency, DimensionalConstitution gate + MCMC |
-| [test_mcmc.py](test_mcmc.py) | decorator `@t()` | 4 | MCMC steps (invariants, tree evolution, energy bounds), predict (length, finiteness, non-trivial), energy consistency |
-| [test_serialization.py](test_serialization.py) | decorator `@t()` | 1 | Round-trip string serialization of Tree |
-| [test_synthetic.py](test_synthetic.py) | decorator `@t()` | 9 | End-to-end synthetic data recovery: linear, quadratic, trig, rational, multi-var, exp — all hard assertions |
-| [test_trace.py](test_trace.py) | decorator `@t()` | 2 | Trace file I/O, trace_predict |
-| [test_visualization.py](test_visualization.py) | decorator `@t()` | 2 | Matplotlib: BIC/Energy trace data validation + plots, predictions-vs-actual correlation + scatter |
-| [test_parliament.py](test_parliament.py) | pytest classes | 16 | ParliamentBase, OccamPrior, sign convention, cache, gate interaction, multi-expert, error resilience, dE_lr/dE_rr deltas |
-| [test_pendulum.py](test_pendulum.py) | pytest classes | 31 | DimExpr algebra, DimensionCheckResult, valid/invalid pendulum dimension checks, EP computation, proposal gate, MCMC integration, fixed_term dimensions |
-| [test_rejection_rate.py](test_rejection_rate.py) | pytest classes | 2 | Phase 3 observability: measure constitution gate rejection rate in MCMC (threshold < 80%) |
+## 运行
 
----
+```bash
+.venv/bin/python -m pytest test/ -q          # 全部实验
+.venv/bin/python -m pytest test/ -q -s       # 带实验记录输出
+.venv/bin/python -m pytest test/ -m "not slow"   # 跳过长时间实验（噪声标度扫描）
+.venv/bin/python test/test_conservation.py   # 单独运行一个实验文件
+```
 
-## Per-File Details
+## 记录框架：lab.py
 
-### test_core_basics.py
-Smoke tests for the core module.
-- **test_import** — verifies `Tree` and `Node` can be imported
-- **test_node_pr_leaf / test_node_pr_binary** — pretty-print format for leaf and binary nodes
-- **test_tree_init_no_data** — Tree initialization with prior_par only, checks `size == 1`
-- **test_tree_from_string** — Tree built from `(_a0_ * x)`, checks `size == 3`
-- **test_canonical_param_rename** — canonical form renames parameters (`_a0_` → `c1`)
-- **test_canonical_idempotent** — applying canonical twice yields the same result
-- **test_canonical_commutative** — `(x + _a0_)` and `(_a0_ + x)` produce the same canonical form
-- **test_canonical_distinct** — different expressions produce distinct canonical forms
+| API | 含义 |
+|---|---|
+| `section(title)` | 实验分区标题 |
+| `check(量, 实测, 期望, tol/rtol=, context=)` | 与理论预期比较，超差抛错 |
+| `check_above/check_below(量, 实测, 阈值)` | 单向界（如 R² > 阈值、拒绝率 < 80%） |
+| `measure(量, 值)` | 只记录观测量（恢复出的表达式、R²、缓存规模） |
+| `reproducible_state(seed)` | 固定 numpy + stdlib 双随机源（core 的 MCMC 掷骰子用 stdlib `random`） |
 
-### test_asymptotic.py
-Unit and integration tests for the `AsymptoticPrior` parliament expert (penalizes division by variables that should remain finite at zero).
-- **TestAsymptoticPriorUnit** (8 tests) — no division → 0 penalty; division by target variable → +0.5; multiple violations stack; parameter denominators safe; nested/deeply-nested denominators; empty/None finite_at_zero → no opinion
-- **TestAsymptoticPriorIdealGas** (5 tests) — Boyle's law physics: P in denominator penalized; no division or P in numerator passes; MCMC with OccamPrior + AsymptoticPrior on ideal gas data
-- **TestAsymptoticPriorIntegration** (5 tests) — equal weights with two experts; weighted structural energy correctness; cache stores per-expert raw values; dE_et includes both contributions; EP differs with second expert
-- **TestAsymptoticPriorMCMC** (1 test) — 50-step MCMC doesn't crash, EP and cache behave correctly
+## 实验总表
 
-### test_dimensional.py
-Unit and integration tests for the dimensional analysis constitution layer.
-- **DimExpr unit** (5 tests) — creation, arithmetic (add/sub/mul), equality/hashing, all_even check
-- **Constraint collection** (10 tests) — leaf with known dim; parameter leaf (symbolic); sin(dimensionless) valid; sin(L) invalid; L+T invalid; linear model (a\*x+b) valid; shared parameter conflict; dimension cancellation; sqrt(x/x) valid; sqrt(a*x) conservative reject; nested exp(sin(x/x)) valid; pow2 scales dim; sqrt(pow2(x)) valid; x\*\*y both must be dimensionless
-- **DimensionalConstitution integration** (3 tests) — valid tree passes; invalid tree raises/rejected; backward compat (no constitution = no error)
-- **MCMC with constitution** (2 tests) — all accepted formulas valid after MCMC; empty constitution returns True; multiple constitutions all must pass
+| 文件 | 物理原则 | 实验数 |
+|---|---|---|
+| [test_calibration.py](test_calibration.py) | 仪器校准：冒烟检查与规范不变性 | 8 |
+| [test_conservation.py](test_conservation.py) | 守恒律：能量记账、尺寸边界、望远镜求和 | 5 |
+| [test_known_laws.py](test_known_laws.py) | 已知定律恢复：含噪数据重新发现 ground truth | 10 |
+| [test_limits.py](test_limits.py) | 极限行为：x→0 有限性与 Boyle 定律 | 5 |
+| [test_dimensions.py](test_dimensions.py) | 量纲齐次性：宪法约束、根量纲锚定与单摆家族 | 34 |
+| [test_prior.py](test_prior.py) | 先验超参数：登记覆盖、EP 记账一致、落盘往返、语料校准 | 46 |
+| [test_parliament.py](test_parliament.py) | 议会动力学：软先验能量、权重、门控级联 | 27 |
+| [test_statistics.py](test_statistics.py) | 统计物理观测：拒绝率、细致平衡、轨迹 | 7 |
 
-### test_mcmc.py
-MCMC invariants and regression tests.
-- **test_mcmc_step_no_data** — 5 MCMC steps without data: asserts tree size in [1, max_size], finite energy/BIC after each step, tree structure changes
-- **test_mcmc_step_with_data** — 10 MCMC steps with linear data: asserts size bounds, finite energy/BIC, tree evolves, energy doesn't increase substantially
-- **test_predict** — predict() returns correct-length Series with all finite, non-constant values; works on different-sized test data
-- **test_energy_consistency** — `get_energy(reset=True)` matches `t.E`
+## 各实验文件
 
-### test_serialization.py
-- **test_round_trip_serialization** — runs MCMC, serializes tree to string, rebuilds from string, asserts expressions match
+### test_calibration.py — 仪器校准
+正式实验前校准仪器。若这些不变量被破坏，后续所有实验结果不可信。
+- 模块导入冒烟；节点打印；初态构造
+- 规范不变性（canonical form）：参数重命名、幂等、交换律等价、可区分性
+- 态重构可逆性：MCMC 演化后序列化往返一致
 
-### test_synthetic.py
-End-to-end synthetic data recovery pipeline. Each test generates data from a known ground-truth function, runs MCMC, and checks that BIC improves and test R² exceeds a hard threshold. All assertions are mandatory (no soft warnings).
-- **test_linear** (R² > 0.7), **test_quadratic** (R² > 0.6), **test_rational** (R² > 0.5), **test_exp** (R² > 0.5)
-- **test_trig** (R² > 0.3), **test_2var** (R² > 0.3), **test_3var_interact** (R² > 0.15), **test_3var_rational** (R² > 0.1), **test_3var_mixed** (R² > 0.05)
+### test_conservation.py — 守恒律与对称性
+假设：无论提议是否被接受，守恒量沿整条 MCMC 轨迹逐步成立。
+- 自由轨迹（无数据）与受驱轨迹（线性数据）：size 有界、E/BIC 有限、树演化
+- 能量自洽：`get_energy(reset=True)` 与记账值一致（容差 1e-6）
+- **望远镜求和**（新实验）：`ΔE(轨迹) == Σ dE(accepted)`（容差 1e-9）——
+  对 `dE_et/dE_lr/dE_rr` 装探测器验证能量记账的增量守恒
 
-### test_trace.py
-- **test_trace_file_write** — writes 30-sample trace, verifies line count and JSON schema
-- **test_trace_predict** — trace_predict returns DataFrame with expected shape, all finite values
+### test_known_laws.py — 已知定律恢复
+假设：含噪但信息充足的数据下，后验应集中向生成数据的定律。
+每轮实验记录恢复出的表达式、训练 R²、ΔBIC 供人工检视。
+- 9 条定律：线性、二次、谐波 sin(2x)、有理 x/(1+x²)、指数衰减 exp(-x²)、
+  双变量线性、三变量交叉/有理/混合——测试集 R² 阈值 0.05–0.7
+- **噪声标度律**（新实验，slow）：σ ∈ {0.01, 0.1, 0.5} 扫描，
+  检验恢复精度随噪声的标度行为
 
-### test_visualization.py
-Visualization tests with data validation assertions.
-- **test_trace_plots** — runs MCMC, asserts 50 trace samples, all BIC/Energy finite, non-zero variance (chain explores), saves PNG
-- **test_pred_vs_actual_plot** — runs MCMC, asserts prediction length matches input, all finite, correlation > 0.5 with actual, saves scatter PNG
+### test_limits.py — 极限行为
+物理动机：已知观测量在某极限下必须有限（如恒温热力学极限），
+则 must-be-finite 变量出现在分母是渐近不匹配。
+- AsymptoticPrior 惩罚规则、嵌套分母识别、空声明不表态
+- Boyle 定律 V = const/P 的四个渐近排布
+- Boyle 定律双专家 MCMC 恢复：软先验与似然失配时似然仍主导
 
-### test_parliament.py
-Comprehensive tests for the parliament (soft prior) layer.
-- **TestParliamentBase** (1 test) — default methods return 0.0
-- **TestOccamPrior** (1 test) — size penalty: 1 node → 1.0, 3 nodes → 3.0, 4 nodes → 4.0
-- **TestSignConvention** (2 tests) — larger tree gives positive dEP; same-size swap gives finite dE
-- **TestEnergyIncludesParliament** (2 tests) — EP includes structural penalty; with parliament > without
-- **TestParliamentCache** (2 tests) — cache hit reuses values; per-expert raw values stored
-- **TestParliamentGateInteraction** (2 tests) — dimensional fail → dE=inf; dimensional pass → parliament contributes
-- **TestMultiParliament** (2 tests) — weights sum to 1; weighted sum correct
-- **TestParliamentErrorResilience** (2 tests) — expert exception silenced → 0.0; capture/delta handle exceptions
-- **TestCacheEviction** (1 test) — cache grows with new canonicals
-- **TestMCMCWithParliament** (1 test) — 50-step MCMC, EP behaves, cache bounded
-- **TestParliamentProposalGate** (5 tests) — dE_lr/replace/prune with parliament deltas; canonical reject skips parliament
+### test_dimensions.py — 量纲齐次性
+宪法层的核心假设：加法/减法齐次、乘除相消、初等函数输入无量纲、
+sqrt 只把量纲指数折半（分数维合法，`a·√L` 与 `L**b` 的量纲由自由参数吸收）、
+`**` 只约束指数无量纲、共享参数须同时满足所有约束。
+- DimExpr 代数；量纲判定数据结构
+- 约束收集：叶子、加减、乘除、初等函数、sqrt 折半、幂标度
+- 根量纲锚定 `target_dim`：因变量量纲作为等式约束并入同一线性系统
+- `param_dims` 回代：解出每个待定常数的量纲（钟摆 `[a]`=无量纲、
+  理想气体 `[a]`=R 的量纲）；结构未定死的分量标 `None`，不假装有解
+- 单摆公式家族：T = 2π√(L/g)、零漂、角度偏移、大振幅级数、比值形式
+- 宪法门集成与 fixed_term；先验能量记账与复杂度排序
+- 语法门与假放行：畸形串给点名坏 token 的 ValueError；未知叶子/未知算符
+  不再默认无量纲，改为 `dim_index=-1` 的结构性 failure
+- 提议门：违宪提议 dE=inf 且试算完全回退（dE_et/dE_lr/dE_rr）
+- MCMC 集成：轨迹上每步都通过宪法检查（硬约束禁止进入违宪态）
 
-### test_pendulum.py
-Thorough dimensional analysis tests using pendulum physics as a running example.
-- **TestDimExprArithmetic** (12 tests) — add, cancel, sub, scalar mul, zero mul, neg, rmul, is_zero, all_even variants, eq/hash, repr
-- **TestDimensionCheckResult** (3 tests) — valid result, invalid with failures, default conflicting_exprs
-- **TestDimensionalValid** (8 tests) — T=2π√(L/g), L/g, sqrt(L)/sqrt(g) (conservative reject), with offset, with angle offset, large-amplitude series, ratio form, pow2 scales, cancellation
-- **TestDimensionalInvalid** (7 tests) — sin(L), L+g, sqrt(L), shared param conflict, cos(T²), pow with dims, shared param dim vs dimless, sin of dimensional with param
-- **TestConstitutionIntegration** (2 tests) — valid tree passes check; invalid rejected in build
-- **TestPriorEnergy** (7 tests) — single leaf = 0; binary op EP; correct pendulum EP; with offset; transcendental EP; custom prior_par; simpler < complex ordering
-- **TestProposalGate** (8 tests) — dE_et reject/accept; dE_lr reject/accept; dE_rr reject/accept root add; dE_rr prune accept; dE_et transcendental reject
-- **TestMCMCIntegration** (3 tests) — all steps pass constitution; invalid proposals always rejected; converges to correct formula
-- **TestFixedTermDimensional** (4 tests) — valid dimensionless; valid same-dim; invalid dim mismatch; None falls through
+### test_prior.py — 先验超参数
+假设：先验以 nat 进入 EP（`exp(-dEB/BT - dEP/PT)`），且这条通道与 core 记账一致。
+- 登记表覆盖 OPS 全部算子（对账不缺不多）；`get_prior_par` 返回拷贝不污染登记表
+- 缺项语义：一阶项按 `fill_missing` 补齐，二阶项缺即无二次惩罚
+- 记账一致：`prior_energy` 与 `Tree.get_energy` 的 EP 分支逐树对拍（含二次项）
+- 平值退化 `flat_zero` 使 EP ≡ 0（后验退化为纯 BIC）；落盘往返 .json / .dat
+- 语料统计与校准方向：越常见的算子罚项越小，矩匹配迭代使失配单调下降
 
-### test_rejection_rate.py
-Phase 3 observability: measures what fraction of proposals are rejected by the constitution gate.
-- **test_rejection_rate_statistics** — 200 MCMC steps, instrumented dE_\* wrappers, asserts rejection rate < 80%
-- **test_rejection_rate_with_parliament** — same with OccamPrior active, asserts rejection rate < 80%
+### test_parliament.py — 议会动力学
+软先验层的基本定律：罚项恒正（变大则 EP 升高）、softmax 权重归一、
+议会能量是各专家原始评价的加权和、宪法先于议会（级联）、
+专家异常静默不中断链条、试算提议完全回退。
+- 议会基线/Occam 尺寸罚项；能量记账 EP 含议会贡献
+- 议会记忆（缓存）：按规范形、按专家名记录，加权发生在读取时
+- 门控级联：违宪提议 inf 拒绝，议会不被询问
+- 多专家加权与 softmax 稀释效应；误差韧性
+- 端对端：单/双议会配置下 50 步轨迹能量有限、缓存有界
+
+### test_statistics.py — 统计物理观测
+把采样链当作统计物理系统测量。
+- 宪法门拒绝率（含 plan_origin.md 相变决策规则：<50% 维持硬拒绝，
+  50–80% 记录，>80% 升级为量纲感知提议）
+- **细致平衡方向性**（新实验）：dE<0 的接受率（≈0.45）应显著高于
+  dE>0（≈0.16）——提议比修正使精确比率匹配不成立，故只检验方向性
+- 轨迹记录完整性与系综预测（trace_predict）
+- 链的涨落（BIC/Energy 非常数 = 未冻结）与预测-实测关联（> 0.5）
+
+## 可复现性说明
+
+`core` 的 MCMC 掷骰子用 **stdlib `random`**（core/mcmc.py），而数据
+生成用 **numpy**。旧套件只固定 numpy 种子，轨迹实际不可复现（失败随
+测试集合划分游走）。本套件用 `lab.reproducible_state(seed)` 同时固定
+两个随机源——同一初态，同一轨迹。
