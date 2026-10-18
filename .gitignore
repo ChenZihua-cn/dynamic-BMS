@@ -7,6 +7,7 @@ experiments/__pycache__
 experiments/data/__pycache__
 test/__pycache__
 gate/__pycache__
+prior/__pycache__
 .pytest_cache
 *.dat
 *:Zone.Identifier

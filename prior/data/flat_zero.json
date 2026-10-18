@@ -1,0 +1,20 @@
+{
+  "Nopi_*": 0.0,
+  "Nopi_**": 0.0,
+  "Nopi_+": 0.0,
+  "Nopi_-": 0.0,
+  "Nopi_/": 0.0,
+  "Nopi_abs": 0.0,
+  "Nopi_cos": 0.0,
+  "Nopi_cosh": 0.0,
+  "Nopi_exp": 0.0,
+  "Nopi_fac": 0.0,
+  "Nopi_log": 0.0,
+  "Nopi_pow2": 0.0,
+  "Nopi_pow3": 0.0,
+  "Nopi_sin": 0.0,
+  "Nopi_sinh": 0.0,
+  "Nopi_sqrt": 0.0,
+  "Nopi_tan": 0.0,
+  "Nopi_tanh": 0.0
+}
