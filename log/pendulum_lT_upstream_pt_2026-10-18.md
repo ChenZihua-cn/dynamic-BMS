@@ -34,6 +34,8 @@
    （7/12、8/12，mixing 0.242、0.300）——同一批种子走同一条轨迹。
 5. **并行回火能救回错配的先验。** 同一份 `nv13.np13`，单温度 2/12 → 20 温度
    12/12。这是 `core/` 目前缺的那一块。
+6. **本报告的本地数字依赖尚未提交的宪法改动**，单独 checkout 本仓库这两个提交
+   （`78e1433`、`18569ba`）复现不出 10/12、9/12，原因与实测证据见 §7。
 
 ---
 
@@ -131,10 +133,35 @@
   `v3_paper/`（core+宪法、`nv13.np13`）、`v3_matched/`（core 无宪法、`nv1.np2`）为准。
 - `core_const_frac` 这个条件（放开 sqrt 偶性）是**空操作**：跑的时候偶性检查已经
   被删掉了，所以它与 `core_const` 逐格相同。已从脚本里移除。
-- 顺手记下的上游事实：`build_from_string` 对嵌套一元算符解析畸形
-  （`'(_a_ * (sqrt L))'` → 打印成 `'(_a_ * L)(sqrt))'`；
-  `'(sqrt (_a_ * L))'` → 崩在 `self.ets[3]` 的 `KeyError`）。采样路径
-  （`et_space` → `_add_et`）不受影响，打印正常。这属于尚未批准的档3。
+- 顺手记下的上游事实（2026-10-18 已随档3 修复，实测过）：`build_from_string` 过去
+  对畸形串静默产出垃圾树——`'(_a_ * (sqrt L))'` 打印成 `'(_a_ * L)(sqrt))'`，
+  `'(sqrt (_a_ * L))'` 崩在 `self.ets[3]` 的 `KeyError`。现在
+  [core/tree_base.py:31-41](../core/tree_base.py) 的元数/未知算符校验会把它们
+  变成带写法提示的 `ValueError`。规范形式实测：`(_a_ * sqrt(L))` 与
+  `(_a_ * (L ** _b_))` 正常建树并原样打印；前缀式 `(** L _b_)` **不是合法输入**
+  （旧代码"接受"它其实是误解析），会被拒。采样路径（`et_space` → `_add_et`）
+  从来不受影响。
+
+## 7. 复现前提：本地那几格依赖未提交的改动
+
+本报告里 `core+宪法` 的 10/12、9/12 以及"宪法不再拦路"的结论，成立前提是工作树里
+**尚未提交**的三处改动：`experts/constitution/dimensional.py`（档1 删 sqrt 偶性与
+`**` 底数无量纲要求、档2 `target_dim` 锚定）与 `core/tree_base.py`（档3 元数校验）。
+单独 checkout `78e1433`/`18569ba` 时，`a*sqrt(L)` 仍被偶性规则硬拒、`L**a` 仍被
+"底数须无量纲"硬拒，那两格数字不可复现。
+
+这三组东西（宪法源文件 + 未跟踪的 `test/` 重构 + `pytest.ini`/`test/lab.py`）
+必须同批落地，否则 HEAD 是红的。实测（2026-10-18）：
+
+| 检查 | 结果 |
+|---|---|
+| HEAD 上跟踪的旧套件 `test/test_dimensional.py` 跑当前源码 | **2 项失败**：`DimExpr all_even check: 'DimExpr' object has no attribute 'all_even'`（HEAD 该文件第 94 行的专项断言）、`collect_constraints: sqrt(a*x) with x dim=L – conservative reject`（断言的正是档1 删掉的保守拒绝） |
+| 锁住新规则的断言在哪 | 只在**未跟踪**的 `test/test_dimensions.py:306-327`（`sqrt(L) 分数维通过`、`_a0_*sqrt(L)`、`sqrt(L)/sqrt(g)` 三条 `expect_valid=True`） |
+| 当前工作树全套 | **142 passed**（449 s） |
+
+所以"只提两个源文件"会留下红 HEAD，"只提 test/ 重构"则测试的是旧规则——
+唯一保持绿的切法是把它们和一个 `pytest.ini` 放在同一批。这一批由宪法改动的
+作者提交，本实验不代为提交。
 
 ## 6. 下一步（按性价比排序）
 
