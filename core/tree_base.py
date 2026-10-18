@@ -11,6 +11,38 @@ import pandas as pd
 from sympy import sympify, latex
 
 
+# `-` is unary in OPS (the sampler only ever builds `- x`), but hand-written and
+# corpus formulas use it as binary subtraction.  Accept both at parse time
+# without widening the sampler's move space.
+_POLYARITY_OPS = {'-': (1, 2)}
+
+
+def _validate_parse(parsed, ops, string):
+    """Check that a parsed expression is structurally buildable.
+
+    ``__parse_recursive`` is a permissive character scanner: a malformed string
+    like ``(sqrt L)`` produces nodes whose "operator" is unknown or whose child
+    count matches no operator, and those used to surface as a bare ``KeyError``
+    from the elementary-tree bookkeeping several frames deeper.
+    """
+    op, children = parsed
+    if not children:
+        return
+    arity = ops.get(op)
+    if arity is None:
+        raise ValueError(
+            f"cannot build {string!r}: '{op}' is not an operator. Unary ops "
+            f"must be written op(arg), e.g. sqrt(L) not (sqrt L)")
+    allowed = _POLYARITY_OPS.get(op, (arity,))
+    if len(children) not in allowed:
+        raise ValueError(
+            f"cannot build {string!r}: '{op}' takes {allowed} argument(s) but "
+            f"got {len(children)}. Every binary operand needs its own "
+            f"parentheses, e.g. (A * (B / C)) not (A * B / C)")
+    for child in children:
+        _validate_parse(child, ops, string)
+
+
 class TreeBase:
     """ The Tree class - base structure and initialization."""
 
@@ -20,7 +52,8 @@ class TreeBase:
                  max_size=50,
                  root_value=None, from_string=None,
                  fixed_term=None, fixed_term_op='*', extra_variables=[],
-                 dimensions=None, constitutions=None, parliaments=None,
+                 dimensions=None, target_dim=None,
+                 constitutions=None, parliaments=None,
                  ):
         # The variables and parameters
         self.variables = variables
@@ -112,6 +145,8 @@ class TreeBase:
         self.PT = float(PT)
         # Dimension declarations and expert system
         self.dimensions = dimensions or {}
+        # Root must equal this dimension; None leaves the root dimension free
+        self.target_dim = target_dim
         self.parliaments = []  # default; GateMixin._init_gate overwrites
         if hasattr(self, '_init_experts'):
             self._init_experts(constitutions, parliaments)
@@ -288,6 +323,7 @@ class TreeBase:
         """
         tlist, parameters, variables = self.__parse_recursive(string,
                                                               vpreturn=True)
+        _validate_parse(tlist, self.ops, string)
         self.__init__(ops=self.ops, prior_par=self.prior_par,
                       x=self.x, y=self.y, BT=self.BT, PT=self.PT,
                       max_size=self.max_size,
@@ -296,6 +332,7 @@ class TreeBase:
                       fixed_term_op=self.fixed_term_op,
                       extra_variables=self.extra_variables,
                       dimensions=self.dimensions,
+                      target_dim=self.target_dim,
                       constitutions=self.constitutions
                           if hasattr(self, 'constitutions') else None,
                       parliaments=self.parliaments

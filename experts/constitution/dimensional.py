@@ -25,6 +25,30 @@ N_DIMS = len(DIM_NAMES)
 _ZERO_COEFFS = ()  # canonical empty coeffs tuple
 
 
+def _numeric_value(token):
+    """Return token as a Fraction if it is a bare number, else None.
+
+    BMS renders pow2/pow3 as `(X ** 2)`/`(X ** 3)`, so numeric leaves occur in
+    legitimate expression strings; a number is dimensionless by construction.
+    """
+    try:
+        return Fraction(str(token))
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_param_name(token):
+    """True for BMS's fitted-constant convention `_x_`.
+
+    ``build_from_string`` re-derives ``tree.parameters`` from the symbols that
+    actually occur in the string, so a parameter introduced later by a move is
+    not necessarily listed there; the naming convention is what makes it a
+    parameter.
+    """
+    return (isinstance(token, str) and len(token) > 2
+            and token.startswith('_') and token.endswith('_'))
+
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -107,23 +131,6 @@ class DimExpr:
     def is_zero(self):
         return len(self._coeffs) == 0 and self.const == Fraction(0)
 
-    def all_even(self):
-        """Check whether all coefficients and the constant are even integers.
-
-        This is a *conservative sufficient condition* for sqrt validity:
-        it never accepts an invalid formula, but may reject some actually
-        valid ones (e.g. when parameter dimension assignments cancel odd
-        contributions).  For the common case ``sqrt(dimensionless_expr)``
-        the input is ZERO and trivially passes.
-        """
-        for _, val in self._coeffs:
-            if val.denominator != 1 or val.numerator % 2 != 0:
-                return False
-        return (
-            self.const.denominator == 1
-            and self.const.numerator % 2 == 0
-        )
-
     def __repr__(self):
         parts = []
         for name, val in self._coeffs:
@@ -150,10 +157,11 @@ class DimExpr:
 @dataclass
 class DimensionFailure:
     """Describes a single dimensional inconsistency."""
-    dim_index: int          # 0..6
-    dim_name: str           # 'L', 'M', ...
+    dim_index: int          # 0..6, or -1 for a structural problem
+                            # (unknown leaf/operator, not tied to one base dim)
+    dim_name: str           # 'L', 'M', ... or '*' for structural
     description: str        # human-readable
-    conflicting_exprs: tuple = None  # (DimExpr, DimExpr) or None
+    conflicting_exprs: tuple = None  # (DimExpr, DimExpr), (name,) or None
 
 
 @dataclass
@@ -161,6 +169,9 @@ class DimensionCheckResult:
     """Result of a dimensional consistency check."""
     is_valid: bool
     failures: list = field(default_factory=list)
+    # name -> 7-tuple of Fraction (or None where the structure leaves the
+    # exponent undetermined): the dimension the fitted constant must carry
+    param_dims: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +188,12 @@ class DimensionCheckResult:
 
 ZERO = DimExpr()
 
+# `X ** Y` has dimension [X]^(value of Y).  In BMS the exponent is always a
+# variable or a fitted parameter, so its numeric value — and hence the
+# resulting dimension — is unknown at proposal time.  Carried as one free
+# unknown per dimension index to keep the constraint system linear.
+POW_OUT = DimExpr(_coeffs=(('<pow>', Fraction(1)),))
+
 
 def _rule_dimensionless_unary(child_exprs):
     """sin, cos, exp, log, ... — input must be dimensionless."""
@@ -185,6 +202,18 @@ def _rule_dimensionless_unary(child_exprs):
 
 def _rule_preserve(child_exprs):
     """- (unary), abs — preserve dimension."""
+    return child_exprs[0], []
+
+
+def _rule_minus(child_exprs):
+    """- — unary negation preserves the dimension.
+
+    Hand-written and corpus formulas also use it as binary subtraction, which
+    the sampler never builds; that must match dimensions like addition, not
+    silently ignore the subtrahend.
+    """
+    if len(child_exprs) == 2:
+        return _rule_add(child_exprs)
     return child_exprs[0], []
 
 
@@ -203,9 +232,9 @@ def _rule_div(child_exprs):
     return child_exprs[0] - child_exprs[1], []
 
 
-def _rule_pow_both_dimensionless(child_exprs):
-    """** — both base and exponent must be dimensionless."""
-    return ZERO, [(child_exprs[0], ZERO), (child_exprs[1], ZERO)]
+def _rule_pow(child_exprs):
+    """** — the exponent must be dimensionless; the base may carry dimension."""
+    return POW_OUT, [(child_exprs[1], ZERO)]
 
 
 def _rule_pow2(child_exprs):
@@ -236,7 +265,7 @@ OP_DIM_RULES = {
     'fac':  _rule_dimensionless_unary,
 
     # -- unary, preserve dimension --
-    '-':   _rule_preserve,
+    '-':   _rule_minus,
     'abs': _rule_preserve,
 
     # -- unary, scale dimension --
@@ -248,7 +277,7 @@ OP_DIM_RULES = {
     '+':  _rule_add,
     '*':  _rule_mul,
     '/':  _rule_div,
-    '**': _rule_pow_both_dimensionless,
+    '**': _rule_pow,
 }
 
 
@@ -274,11 +303,13 @@ def collect_constraints(node, known_dims, param_set):
         The symbolic dimension expression at the root for each index.
     constraints : list[list[tuple[DimExpr, DimExpr]]]  (length 7)
         Constraint pairs (lhs, rhs) collected for each dimension index.
-    sqrt_even_info : list[tuple[int, DimExpr]]
-        (dim_index, input_expr) for each sqrt node, to check evenness.
+    unknowns : list[DimensionFailure]
+        Structural problems that no constraint can express: a leaf whose
+        dimension is neither declared nor solvable, or an operator missing
+        from the rules table.  They are not silently dimensionless.
     """
     constraints = [[] for _ in range(N_DIMS)]
-    sqrt_even_info = []
+    unknowns = []
 
     def walk(n):
         if not n.offspring:                      # -- leaf -----------------
@@ -289,9 +320,21 @@ def collect_constraints(node, known_dims, param_set):
             elif val in param_set:
                 coeffs = ((val, Fraction(1)),)
                 return [DimExpr(_coeffs=coeffs) for _ in range(N_DIMS)]
+            elif _numeric_value(val) is not None:
+                # Numeric literal, e.g. the 2 in `(L ** 2)` — the way Node.pr
+                # renders pow2.  A bare number carries no dimension.
+                return [DimExpr() for _ in range(N_DIMS)]
             else:
-                # unspecified leaf (e.g. numeric literal, extra variable)
-                # — default to dimensionless
+                unknowns.append(DimensionFailure(
+                    dim_index=-1,
+                    dim_name='*',
+                    description=(
+                        f"leaf '{val}' has no declared dimension and is not a "
+                        f"fitted parameter: add dimensions['{val}'] = (...) or "
+                        f"declare it as a parameter"
+                    ),
+                    conflicting_exprs=(val,),
+                ))
                 return [DimExpr() for _ in range(N_DIMS)]
 
         # -- internal node ---------------------------------------------------
@@ -299,42 +342,59 @@ def collect_constraints(node, known_dims, param_set):
         op = n.value
         rule = OP_DIM_RULES.get(op)
         if rule is None:
-            # Unknown op – propagate dimensionless, no constraints
+            unknowns.append(DimensionFailure(
+                dim_index=-1,
+                dim_name='*',
+                description=(
+                    f"'{op}' is not a known operator with a dimension rule "
+                    f"(tree was built from {len(n.offspring)} offspring)"
+                ),
+                conflicting_exprs=(op,),
+            ))
             return [DimExpr() for _ in range(N_DIMS)]
+
+        # A literal exponent is a known number, so [X ** k] = [X]^k exactly;
+        # only a fitted (unknown-valued) exponent needs the POW_OUT symbol.
+        literal_exp = None
+        if op == '**' and len(n.offspring) == 2 and not n.offspring[1].offspring:
+            literal_exp = _numeric_value(n.offspring[1].value)
 
         result = []
         for j in range(N_DIMS):
             child_js = [ch[j] for ch in child_exprs_list]
             out_expr, pairs = rule(child_js)
+            if literal_exp is not None:
+                out_expr = literal_exp * child_js[0]
             result.append(out_expr)
             for lhs, rhs in pairs:
                 constraints[j].append((lhs, rhs))
 
-        # Collect sqrt evenness check
-        if op == 'sqrt':
-            for j in range(N_DIMS):
-                sqrt_even_info.append((j, child_exprs_list[0][j]))
-
         return result
 
     root_exprs = walk(node)
-    return root_exprs, constraints, sqrt_even_info
+    return root_exprs, constraints, unknowns
 
 
 # ---------------------------------------------------------------------------
-# Gaussian elimination (pure Python + Fraction)
+# Gauss-Jordan reduction (pure Python + Fraction)
 # ---------------------------------------------------------------------------
 
-def _gaussian_elimination(augmented):
-    """Check consistency of linear system A*x = b.
+def _solve_system(augmented):
+    """Reduce the linear system A*x = b and back-substitute.
 
     ``augmented`` is a list of list of Fraction, shape (m, k+1), where the
     last column is the RHS vector *negated*: A*x + b = 0  <=>  A*x = -b.
 
-    Returns True if the system has at least one solution.
+    Returns
+    -------
+    (consistent, values)
+        ``consistent`` is False if the system has no solution.  ``values`` is a
+        length-k list holding each unknown's dimension exponent, or None for an
+        unknown the structure does not pin down (it is a pivot whose row still
+        involves a free variable).
     """
     if not augmented:
-        return True
+        return True, []
 
     rows = len(augmented)
     cols = len(augmented[0])
@@ -344,13 +404,14 @@ def _gaussian_elimination(augmented):
         # No parameters: each constraint is 0*x + const = 0  →  const == 0
         for row in augmented:
             if row[0] != Fraction(0):
-                return False
-        return True
+                return False, None
+        return True, []
 
     # Work on a copy
     M = [row[:] for row in augmented]
 
     pivot_row = 0
+    pivots = {}                      # column -> row it was pivoted into
     for col in range(k):
         # Find a row with non-zero entry in this column
         best = None
@@ -376,6 +437,7 @@ def _gaussian_elimination(augmented):
                 for c in range(col, cols):
                     M[r][c] -= factor * M[pivot_row][c]
 
+        pivots[col] = pivot_row
         pivot_row += 1
 
     # Check for contradiction: all-zero coeffs but non-zero RHS
@@ -383,31 +445,46 @@ def _gaussian_elimination(augmented):
         all_zero = all(M[r][c] == Fraction(0) for c in range(k))
         rhs_nonzero = M[r][k] != Fraction(0)
         if all_zero and rhs_nonzero:
-            return False
+            return False, None
 
-    return True
+    free_cols = [c for c in range(k) if c not in pivots]
+    values = [None] * k
+    for col, row in pivots.items():
+        # x_col is uniquely fixed only if its row does not still depend on a
+        # free unknown (otherwise x_col = rhs - sum(coef * x_free))
+        if all(M[row][fc] == Fraction(0) for fc in free_cols):
+            values[col] = M[row][k]
+    return True, values
 
 
 # ---------------------------------------------------------------------------
 # Constraint solving
 # ---------------------------------------------------------------------------
 
-def solve_constraints(constraints_per_index, sqrt_even_info):
-    """Solve per-dimension linear systems and check sqrt evenness.
+def solve_constraints(constraints_per_index, report_params=None,
+                      extra_failures=()):
+    """Solve the per-dimension linear systems.
 
     Parameters
     ----------
     constraints_per_index : list[list[tuple[DimExpr, DimExpr]]]
         Length 7.  Each element is a list of (lhs, rhs) equality constraints
         for that dimension index.
-    sqrt_even_info : list[tuple[int, DimExpr]]
-        (dim_index, input_expr) for sqrt nodes.
+    report_params : iterable of str, optional
+        Parameter names whose solved dimension vectors should be reported in
+        ``result.param_dims``.  A name is reported as determined only when the
+        linear system pins it uniquely for that dimension index.
+    extra_failures : iterable of DimensionFailure, optional
+        Structural failures found while collecting (unknown leaves/operators),
+        which no linear constraint can express.
 
     Returns
     -------
     DimensionCheckResult
     """
-    failures = []
+    failures = list(extra_failures)
+    report = set(report_params or ())
+    param_dims = {p: [None] * N_DIMS for p in sorted(report)}
 
     for j in range(N_DIMS):
         pairs = constraints_per_index[j]
@@ -454,7 +531,8 @@ def solve_constraints(constraints_per_index, sqrt_even_info):
             row[k] = -diff.const
             augmented.append(row)
 
-        if not _gaussian_elimination(augmented):
+        consistent, values = _solve_system(augmented)
+        if not consistent:
             # Pick a representative pair for diagnostics
             rep = pairs[0]
             failures.append(DimensionFailure(
@@ -466,23 +544,15 @@ def solve_constraints(constraints_per_index, sqrt_even_info):
                 ),
                 conflicting_exprs=rep,
             ))
-
-    # sqrt evenness
-    for j, expr in sqrt_even_info:
-        if not expr.all_even():
-            failures.append(DimensionFailure(
-                dim_index=j,
-                dim_name=DIM_NAMES[j],
-                description=(
-                    f"sqrt requires even-dimensioned input on "
-                    f"{DIM_NAMES[j]}, got ({expr})"
-                ),
-                conflicting_exprs=(expr, ZERO),
-            ))
+        elif values is not None:
+            for name, exp in zip(params, values):
+                if exp is not None and name in param_dims:
+                    param_dims[name][j] = exp
 
     return DimensionCheckResult(
         is_valid=len(failures) == 0,
         failures=failures,
+        param_dims={p: tuple(v) for p, v in param_dims.items()},
     )
 
 
@@ -490,7 +560,8 @@ def solve_constraints(constraints_per_index, sqrt_even_info):
 # Top-level API
 # ---------------------------------------------------------------------------
 
-def check_dimensional_consistency(root, known_dims, param_set=None):
+def check_dimensional_consistency(root, known_dims, param_set=None,
+                                  target_dim=None):
     """Check if an expression tree is dimensionally consistent.
 
     Parameters
@@ -500,8 +571,11 @@ def check_dimensional_consistency(root, known_dims, param_set=None):
     known_dims : dict
         Mapping variable_name -> 7-tuple-of-int.
     param_set : set of str, optional
-        Leaf names that should be treated as unknown-dimension parameters.
-        If None, all leaves not in *known_dims* are treated as parameters.
+        Leaf names treated as unknown-dimension parameters.  If None, no leaf
+        is treated as a parameter (unknown leaves fall back to dimensionless).
+    target_dim : 7-tuple of int, optional
+        Dimension the whole expression must carry (that of the dependent
+        variable).  If None, only internal homogeneity is enforced.
 
     Returns
     -------
@@ -510,9 +584,21 @@ def check_dimensional_consistency(root, known_dims, param_set=None):
     if param_set is None:
         param_set = set()
 
-    _, constraints, sqrt_info = collect_constraints(root, known_dims,
-                                                     param_set)
-    return solve_constraints(constraints, sqrt_info)
+    root_exprs, constraints, unknowns = collect_constraints(
+        root, known_dims, param_set)
+
+    if target_dim is not None:
+        if len(target_dim) != N_DIMS:
+            raise ValueError(
+                f"target_dim must have {N_DIMS} entries, got {len(target_dim)}"
+            )
+        for j, d in enumerate(target_dim):
+            constraints[j].append(
+                (root_exprs[j], DimExpr(const=Fraction(d)))
+            )
+
+    return solve_constraints(constraints, report_params=param_set,
+                             extra_failures=unknowns)
 
 
 # ---------------------------------------------------------------------------
@@ -554,20 +640,25 @@ class DimensionalConstitution(ConstitutionBase):
     """Hard constraint: reject dimensionally inconsistent expression trees.
 
     Reads dimension declarations from ``tree.dimensions`` (a dict mapping
-    variable names to 7-tuples of integer exponents).  Fitted parameters
-    automatically receive unknown dimension variables solved via constraint
-    satisfaction.
+    variable names to 7-tuples of integer exponents) and the required root
+    dimension from ``tree.target_dim``.  Fitted parameters automatically
+    receive unknown dimension variables solved via constraint satisfaction.
     """
 
     def check(self, tree):
         known_dims = getattr(tree, 'dimensions', {})
+        target_dim = getattr(tree, 'target_dim', None)
         param_set = set(getattr(tree, 'parameters', []))
         if hasattr(tree, 'fixed_parameters'):
             param_set |= set(tree.fixed_parameters)
+        # A move can introduce a parameter that tree.parameters never learned
+        # about; recognise it by the naming convention, not by the book list.
+        param_set |= {n.value for n in getattr(tree, 'nodes', [])
+                      if not n.offspring and _is_param_name(n.value)}
 
         if getattr(tree, 'fixed_term', None) is None:
             return check_dimensional_consistency(tree.root, known_dims,
-                                                 param_set)
+                                                 param_set, target_dim)
 
         # Parse fixed_term and combine with main tree via fixed_term_op.
         # Overall formula: (main_tree) fixed_term_op (fixed_term)
@@ -575,4 +666,4 @@ class DimensionalConstitution(ConstitutionBase):
         combined_root = Node(value=tree.fixed_term_op,
                              offspring=[tree.root, fixed_root])
         return check_dimensional_consistency(combined_root, known_dims,
-                                             param_set)
+                                             param_set, target_dim)
