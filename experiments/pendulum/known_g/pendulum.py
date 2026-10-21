@@ -9,6 +9,15 @@
 g 当作已知行星参数，无误差），使拟合常数跨星球共享。交给
 BMS + 量纲宪法搜索解析表达式。
 
+适用范围
+--------
+这是一个**回收测试**（injection/recovery test）：目标式已知，问的是搜索
+走不走得到那儿。它不是发现实验——g 是作为输入列直接给出的，5 颗星球又被
+合并成一张表、只允许一条公式，所以"存在一条跨星球的共同公式"是喂数据时
+设定的前提，不是这里得到的结论。若要检验"从多份彼此独立的数据里发现共同
+形状"，需要走 ``Tree(x=dict(...))`` 的多数据集入口（每份只给 L、T，不给
+g），本脚本不做这件事。
+
 结构先验可配置
 --------------
 ``--prior`` 从 ``prior/registry.py`` 的登记表里取一组超参数，注入
@@ -16,7 +25,7 @@ BMS + 量纲宪法搜索解析表达式。
 进入 MCMC 接受率。可用名字见 ``prior.list_priors()``，其中
 
 * ``bms_wiki_nv13_np13``  —— [BMS2020] 论文所用先验（wiki 语料校准，
-  一阶 18 项 + 乘法二次项）。**本轮实验的默认与主角**。
+  一阶 18 项 + 乘法二次项）。本实验的默认先验。
 * ``bms_wiki_nv13_np13_linear`` —— 同上但去掉二次项，用于消融。
 * ``flat_default`` / ``flat_zero`` —— 未校准平值（10 nat）/ 纯 BIC。
 * ``flat1.0`` —— 本实验 2026-10-16 那轮用的手工平值（1 nat/算子），
@@ -26,13 +35,23 @@ BMS + 量纲宪法搜索解析表达式。
 
 对照实验
 --------
-A. 单星球（地球）且只给变量 L —— 即本文件原始版本的逻辑。
-   注意：量纲宪法的 sqrt 偶数性检查要求根号内量纲指数为偶数，
-   sqrt(L)（量纲 L^1）会被硬拒绝，因此该设定在原理上就不可能
-   找到真公式 a*sqrt(L)。
-B. 单星球（地球）但提供变量 L, g —— 检验没有 g 的变化时，
-   结构是否仍能被找到（此时 g 依赖性本身不可识别，但宪法 +
-   提供的 g 列可能依然把搜索引向 a*sqrt(L/g)）。
+A. 单星球（地球）且只给变量 L —— 本文件的原始设定。真公式
+   ``a*sqrt(L)`` 在宪法档1（删掉 sqrt 偶数性检查与 ``**`` 底数无量纲
+   要求）之前不可表达，所以 2026-10-17 那批迹线里对照 A 的 0%
+   是"结构不可达"，不是采样失败。档1 之后该式可表达，g 的数值由
+   拟合常数吸收。
+B. 单星球（地球）但提供变量 L, g —— 60 个点，g 恒为 9.81，
+   g 依赖性本身不可识别。
+C. 5 星球 x 60 点但 g 一律给 9.81 —— 与主实验同样本量、同样变量集，
+   只抽掉"g 在星球之间变化"这一件事。B 与主实验之间同时差着样本量，
+   C 与主实验之间只差 g 的变化，加 C 是为了把这两个因素分开。
+
+采样器
+------
+默认单温度（``Tree.mcmc``），与 ``pendulum_runs/`` 下 2026-10-15 ~
+10-17 的历史结果可比。``--tempering N`` 改用 N 温度并行回火
+（``Ts = [1] + [1.04**k for k in range(1, N)]``，[BMS2020] README 配方），
+结果写进 ``<先验名>_ptN/`` 独立目录，不覆盖单温度产物。
 
 判定标准
 --------
@@ -41,17 +60,29 @@ B. 单星球（地球）但提供变量 L, g —— 检验没有 g 的变化时�
 scipy.special.factorial），则属于"真公式族"；有效常数
 c* = 该常数，与 2*pi = 6.2832 对比。
 
-除"是否找到"外，还报告先验真正影响的三个量：
+命中在链级上是全有全无的：一条链一旦落进真公式盆，其 400 个样本里
+98~100% 都在族内，因此样本级占有率 ≈ 命中链数 / 总链数。两个数一起报；
+它是重启成功率，不是后验质量，按前者读。
+
+``--tempering`` 下四个场景的还原率都到了 100%，这个量随之饱和，不再适合
+作因变量。``uses_g_frac``（后验样本的公式里是否出现 g）还有余量，但它能
+说明的范围有限：g 是输入列、公式唯一性是前提，"变了的变量进公式、没变的
+被常数吸收"主要由 BIC 的拟合改善决定。把它当作模型选择与复杂度惩罚是否
+双向正常的检查来用，不要当作实验结论。
+
+除"是否找到"外，还报告受先验影响的三个量：
   * MAP 公式（按后验能量 E = BIC/2 + EP 最小者，而非按 BIC 最小者）；
   * MAP 公式的复杂度（sympy count_ops）；
   * 迹线的 mixing（相邻样本公式变化率）与平均 EP。
-按 BIC 取最优会绕过先验，只有按 E 取最优才能看出先验在做什么。
+按 BIC 取最优会绕过先验；按 E 取最优才包含先验的作用。
 """
 
 import sys
 import os
+import re
 import json
 import argparse
+import subprocess
 import warnings
 from pathlib import Path
 
@@ -62,12 +93,14 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from multiprocessing import Pool
 
 import scipy.special
+from scipy.stats import beta as _beta
 from sympy import sympify, lambdify, count_ops
 
-from core import Tree, Node, OPS
+from core import Tree, Node, OPS, Parallel
 from experts.constitution.dimensional import (
     DimensionalConstitution,
     DimExpr,
@@ -92,6 +125,7 @@ PLANETS = {           # 重力加速度 m/s^2
     'Jupiter': 24.79,
 }
 N_PER_PLANET = 60
+G_EARTH = PLANETS['Earth']
 L_RANGE = (0.1, 3.0)  # m
 DL = 0.01             # 米尺分度值
 DT = 0.1              # 秒表分度值
@@ -111,12 +145,19 @@ PARAMS = ['_a_']
 
 SCENARIOS = [('main', ['L', 'g']),
              ('ctrlA_Lonly', ['L']),
-             ('ctrlB_Lg', ['L', 'g'])]
+             ('ctrlB_Lg', ['L', 'g']),
+             ('ctrlC_constG', ['L', 'g'])]
 SCENARIO_LABELS = {
     'main': '主实验：5 星球，变量 L, g',
     'ctrlA_Lonly': '对照 A：仅地球，变量 L（原脚本逻辑）',
     'ctrlB_Lg': '对照 B：仅地球，变量 L, g',
+    'ctrlC_constG': '对照 C：5 星球 x 60 点，g 恒为 9.81，变量 L, g',
 }
+# 每个场景喂 main() 里构造的哪一份数据
+SCENARIO_FRAME = {'main': 'all', 'ctrlA_Lonly': 'earth',
+                  'ctrlB_Lg': 'earth', 'ctrlC_constG': 'constG'}
+SCENARIO_SHORT = {'main': '5 planets\nL,g', 'ctrlA_Lonly': 'Earth\nL only',
+                  'ctrlB_Lg': 'Earth\nL,g', 'ctrlC_constG': '5 planets\ng fixed'}
 
 
 def resolve_prior(name, scale=1.0):
@@ -126,8 +167,14 @@ def resolve_prior(name, scale=1.0):
     return get_prior_par(name, scale=scale)
 
 
-def run_tag(prior_name, scale):
-    return prior_name if scale == 1.0 else f'{prior_name}_x{scale:g}'
+def run_tag(prior_name, scale, n_temps=0):
+    tag = prior_name if scale == 1.0 else f'{prior_name}_x{scale:g}'
+    return tag if not n_temps else f'{tag}_pt{n_temps}'
+
+
+def ladder(n_temps):
+    """[BMS2020] README 的几何温度阶梯：1, 1.04, 1.04^2, ..."""
+    return [1] + [1.04 ** k for k in range(1, n_temps)]
 
 
 # ---------------------------------------------------------------------------
@@ -164,17 +211,25 @@ def run_chain(task):
     trace_fn = str(rundir / f'trace_{tag}_{chain_id}.dat')
     progress_fn = str(rundir / f'progress_{tag}_{chain_id}.dat')
 
-    t = Tree(
+    tree_kwargs = dict(
         variables=variables, parameters=['a'],
         dimensions=DIMS, constitutions=[DimensionalConstitution()],
         x=df[variables].reset_index(drop=True),
         y=df['T'].reset_index(drop=True),
-        prior_par=prior_par,
+        prior_par=prior_par, max_size=cfg['max_size'],
     )
-    t.mcmc(tracefn=trace_fn, progressfn=progress_fn,
-           burnin=cfg['burnin'], thin=cfg['thin'], samples=cfg['samples'],
-           progress=False)
-    return trace_fn
+    extra = {}
+    if cfg['Ts']:
+        sampler = Parallel(cfg['Ts'], **tree_kwargs)
+        extra['anneal_after'] = cfg['anneal_after']
+    else:
+        sampler = Tree(**tree_kwargs)
+    n_annealed = sampler.mcmc(tracefn=trace_fn, progressfn=progress_fn,
+                              burnin=cfg['burnin'], thin=cfg['thin'],
+                              samples=cfg['samples'],
+                              progress=False, **extra)
+    return {'trace_fn': trace_fn, 'tag': tag, 'chain_id': chain_id,
+            'annealed': int(n_annealed or 0)}
 
 
 # ---------------------------------------------------------------------------
@@ -226,9 +281,30 @@ def true_family_constant(formula, par_values, df, variables, rtol=1e-4):
     return m, nops
 
 
+def binom_ci(k, n, conf=0.95):
+    """链级恢复率的 Clopper–Pearson 精确区间。
+
+    与 2026-10-16 审计报告同一口径（那边 0/16 的上界 20.6% 就是精确区间给的），
+    别换成 Wilson，两处数字会打架。
+    """
+    if n == 0:
+        return (0.0, 1.0)
+    a = (1. - conf) / 2.
+    lo = 0.0 if k == 0 else float(_beta.ppf(a, k, n - k + 1))
+    hi = 1.0 if k == n else float(_beta.ppf(1. - a, k + 1, n - k))
+    return (lo, hi)
+
+
+def uses_variable(formula, name):
+    """公式里是否出现了变量 name（整词匹配，避免把 grad/gamma 之类算成 g）。"""
+    return re.search(r'(?<![A-Za-z_])%s(?![A-Za-z_])' % re.escape(name),
+                     formula) is not None
+
+
 def analyze_traces(trace_files, df, variables):
     """真公式族占有率、有效常数、最优 BIC、MAP（最小 E）、复杂度与 mixing。"""
     n_total, n_true = 0, 0
+    n_uses_g = 0
     c_eff, sizes, eps = [], [], []
     best_bic = (np.inf, None, None, None)   # (bic, formula, c, nops)
     best_E = (np.inf, None, None, None)     # (E, formula, c, nops)  <- MAP
@@ -241,6 +317,8 @@ def analyze_traces(trace_files, df, variables):
                 rec = json.loads(line)
                 sidx, bic, E, formula, pv = rec[0], rec[1], rec[2], rec[4], rec[5]
                 n_total += 1
+                if 'g' in variables and uses_variable(formula, 'g'):
+                    n_uses_g += 1
                 eps.append(E - bic / 2.)            # EP = E - EB
                 if prev_formula is not None:
                     n_pairs += 1
@@ -263,11 +341,15 @@ def analyze_traces(trace_files, df, variables):
         'n_total': n_total,
         'n_true': n_true,
         'occ_true': n_true / max(n_total, 1),
+        # 还原率饱和后仍有余量的量。受"g 是喂进去的列、公式唯一性是前提"
+        # 限制，只当模型选择的检查用，别当结论。
+        'uses_g_frac': (n_uses_g / n_total) if 'g' in variables else None,
         'c_median': float(np.nanmedian(c_arr)),
         'c_p10': float(np.nanpercentile(c_arr, 10)),
         'c_p90': float(np.nanpercentile(c_arr, 90)),
         'n_chains_hit': len(first_hit),
         'n_chains': len(trace_files),
+        'chain_ci': binom_ci(len(first_hit), len(trace_files)),
         'first_hit_samples': sorted(first_hit.values()),
         'best_bic': best_bic[0],
         'best_bic_formula': best_bic[1],
@@ -284,8 +366,8 @@ def analyze_traces(trace_files, df, variables):
     }
 
 
-def reference_tree(df, variables, prior_par):
-    """朴素真公式 _a_*sqrt(L/g) 在同一数据上的 BIC、能量与拟合常数。"""
+def reference_tree(df, variables, prior_par, formula='(_a_ * sqrt((L / g)))'):
+    """朴素真公式在同一数据上的 BIC、能量与拟合常数。"""
     warnings.filterwarnings('ignore')
     t = Tree(
         variables=variables, parameters=['a'],
@@ -293,23 +375,23 @@ def reference_tree(df, variables, prior_par):
         x=df[variables].reset_index(drop=True),
         y=df['T'].reset_index(drop=True),
         prior_par=prior_par,
-        from_string='(_a_ * sqrt((L / g)))',
+        from_string=formula,
     )
     a_fit = t.par_values['d0']['_a_']
     E, EB, EP = t.get_energy(bic=False, reset=True)
     return {'bic': t.bic, 'a': a_fit, 'E': E, 'EP': EP}
 
 
-def analyze_run(rundir, df_all, df_earth, prior_par=None):
-    """分析一个 run 目录下的三个场景，返回 {tag: 指标}。"""
+def analyze_run(rundir, frames):
+    """分析一个 run 目录下的各场景，返回 {tag: 指标}。"""
     rundir = Path(rundir)
     results = {}
     for tag, variables in SCENARIOS:
         fns = sorted(rundir.glob(f'trace_{tag}_*.dat'))
         if not fns:
             continue
-        dfc = df_all if tag == 'main' else df_earth
-        results[tag] = analyze_traces([str(f) for f in fns], dfc, variables)
+        results[tag] = analyze_traces([str(f) for f in fns],
+                                      frames[SCENARIO_FRAME[tag]], variables)
     return results
 
 
@@ -319,9 +401,15 @@ def print_results(results, prior_name, prior_par, refs):
     print('=' * 72)
     for tag, res in results.items():
         print(f'\n[{SCENARIO_LABELS.get(tag, tag)}]')
-        print(f'  真公式族占有率 : {res["n_true"]}/{res["n_total"]}'
-              f' = {res["occ_true"]:.1%}'
-              f'   （命中过的链: {res["n_chains_hit"]}/{res["n_chains"]}）')
+        lo, hi = res['chain_ci']
+        print(f'  链级恢复率     : {res["n_chains_hit"]}/{res["n_chains"]} 条链'
+              f' = {res["n_chains_hit"] / max(res["n_chains"], 1):.1%}'
+              f'  95% CI [{lo:.1%}, {hi:.1%}]'
+              f'   （样本级占有率 {res["n_true"]}/{res["n_total"]}'
+              f' = {res["occ_true"]:.1%}）')
+        if res.get('uses_g_frac') is not None:
+            print(f'  用到 g 的样本  : {res["uses_g_frac"]:.1%}'
+                  f'   （g 已给为输入变量；还原率饱和后改看这个量）')
         if res['n_true']:
             print(f'  有效常数 c*    : 中位 {res["c_median"]:.4f}'
                   f'（10-90%: {res["c_p10"]:.4f} ~ {res["c_p90"]:.4f}），'
@@ -369,30 +457,63 @@ def make_figure(results, df_all, rundir, prior_name, refs, out_path):
     ax.legend(fontsize=8)
 
     ax = axes[1, 0]
+    ref_E = float(refs['main']['E'])
+    finals = []
     for pfn in sorted(Path(rundir).glob('progress_main_*.dat')):
-        prog = np.loadtxt(pfn)
-        ax.plot(prog[:, 0], prog[:, 1], lw=0.8, alpha=0.8,
-                label=pfn.stem.replace('progress_main_', 'chain '))
-    ax.axhline(refs['main']['E'], color='k', ls=':', lw=1,
-               label='E(true formula) reference')
+        prog = np.atleast_2d(np.loadtxt(pfn))
+        near = bool(prog[-1, 1] < ref_E + 50)
+        finals.append((prog[-1, 1], near))
+        ax.plot(prog[:, 0], prog[:, 1], lw=0.7, alpha=0.9 if near else 0.3,
+                color='tab:green' if near else 'tab:gray')
+    ax.axhline(ref_E, color='k', ls=':', lw=1.2)
     ax.set_xlabel('sample'); ax.set_ylabel('Energy  E = BIC/2 + EP')
     ax.set_title(f'(c) Energy traces, main experiment (prior={prior_name})')
-    ax.legend(fontsize=7, ncol=2)
+    n_near = sum(near for _, near in finals)
+    trapped = [e for e, near in finals if not near]
+    handles = [Line2D([], [], color='tab:green', lw=1.4,
+                      label=f'{n_near}/{len(finals)} chains end within '
+                            f'50 nat of E$_{{true}}$')]
+    if trapped:
+        handles.append(Line2D([], [], color='tab:gray', lw=1.4, alpha=0.5,
+                              label=f'{len(trapped)} end higher, median E '
+                                    f'$\\approx$ {np.median(trapped):.0f}'))
+    handles.append(Line2D([], [], color='k', ls=':', lw=1.2,
+                          label=f'E(true formula) = {ref_E:.0f}'))
+    ax.legend(handles=handles, fontsize=8, loc='upper right', framealpha=0.95)
 
     ax = axes[1, 1]
     tags = [t for t, _ in SCENARIOS if t in results]
-    occ = [results[t]['occ_true'] for t in tags]
-    bars = ax.bar(range(len(tags)), occ,
-                  color=['tab:green', 'tab:red', 'tab:orange'][:len(tags)])
-    ax.set_xticks(range(len(tags)))
-    ax.set_xticklabels(['5 planets\nL,g', 'Earth\nL only', 'Earth\nL,g'][:len(tags)],
-                       fontsize=9)
-    ax.set_ylim(0, 1.05)
-    ax.set_ylabel('True-family posterior occupancy')
-    ax.set_title('(d) Recovery rate of T = c*sqrt(L/g)')
-    for b, o in zip(bars, occ):
-        ax.text(b.get_x() + b.get_width() / 2, o + 0.02, f'{o:.0%}',
-                ha='center', fontsize=11)
+    x = np.arange(len(tags), dtype=float)
+    frac = np.array([results[t]['n_chains_hit'] / max(results[t]['n_chains'], 1)
+                     for t in tags])
+    ci = np.array([results[t]['chain_ci'] for t in tags])
+    ug = np.array([results[t]['uses_g_frac'] or 0.0 for t in tags])
+    has_g = np.array([results[t]['uses_g_frac'] is not None for t in tags])
+    ax.bar(x - 0.19, frac, width=0.36,
+           yerr=[frac - ci[:, 0], ci[:, 1] - frac],
+           capsize=3, ecolor='black', error_kw=dict(lw=1),
+           color='tab:green', label='chains recovered (95% CI)')
+    ax.bar(x[has_g] + 0.19, ug[has_g], width=0.36, color='tab:blue',
+           label='samples whose formula uses g')
+    for i, t in enumerate(tags):
+        r = results[t]
+        ax.text(i - 0.19, min(ci[i, 1] + 0.04, 1.2),
+                f'{r["n_chains_hit"]}/{r["n_chains"]}',
+                ha='center', fontsize=8)
+        if has_g[i]:
+            ax.text(i + 0.19, ug[i] + 0.03, f'{ug[i]:.0%}',
+                    ha='center', fontsize=8)
+        else:
+            ax.text(i + 0.19, 0.03, 'g not\noffered', ha='center',
+                    fontsize=7, color='grey')
+    ax.set_xticks(x)
+    ax.set_xticklabels([SCENARIO_SHORT[t] for t in tags], fontsize=9)
+    ax.set_ylim(0, 1.42)
+    ax.set_yticks(np.arange(0, 1.01, 0.2))
+    ax.set_ylabel('Fraction (per chain / per sample)')
+    ax.set_title('(d) Chain-level recovery vs.\n'
+                 'whether the formula contains g')
+    ax.legend(fontsize=7, loc='upper center', ncol=2, framealpha=0.95)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
@@ -413,6 +534,14 @@ def parse_args(argv=None):
     p.add_argument('--samples', type=int, default=SAMPLES)
     p.add_argument('--chains-main', type=int, default=CHAINS_MAIN)
     p.add_argument('--chains-ctrl', type=int, default=CHAINS_CTRL)
+    p.add_argument('--max-size', type=int, default=50,
+                   help='表达式最大规模（默认 50，与历史结果一致）')
+    p.add_argument('--tempering', type=int, default=0, metavar='N',
+                   help='用 N 温度并行回火取代单温度（默认 0 = 单温度，'
+                        '保持与 pendulum_runs/ 历史结果可比）')
+    p.add_argument('--anneal-after', type=int, default=2000,
+                   help='某对温度连续 N 个样本没有接受交换就整体退火'
+                        '（仅 --tempering 生效，0 = 关闭）')
     p.add_argument('--seed-offset', type=int, default=0,
                    help='主实验链种子整体平移，用于在不覆盖已有迹线的前提下'
                         '扩充链数（文件名按 chain_id 编号，注意别撞车）')
@@ -421,6 +550,22 @@ def parse_args(argv=None):
     p.add_argument('--no-fig', action='store_true')
     p.add_argument('--list-priors', action='store_true')
     return p.parse_args(argv)
+
+
+def git_state():
+    """记录产物出自哪个代码态 —— 结果能不能用，全看这一条。"""
+    root = str(Path(__file__).resolve().parents[3])
+    try:
+        head = subprocess.check_output(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            cwd=root, stderr=subprocess.DEVNULL).decode().strip()
+        dirty = subprocess.check_output(
+            ['git', 'status', '--porcelain'],
+            cwd=root, stderr=subprocess.DEVNULL).decode().splitlines()
+        return {'head': head, 'dirty': bool(dirty),
+                'dirty_paths': [l.split()[-1] for l in dirty][:20]}
+    except Exception:
+        return {'head': None, 'dirty': None, 'dirty_paths': []}
 
 
 def main(argv=None):
@@ -432,15 +577,27 @@ def main(argv=None):
         return
 
     prior_par = resolve_prior(args.prior, args.scale)
-    tag = run_tag(args.prior, args.scale)
+    tag = run_tag(args.prior, args.scale, args.tempering)
     rundir = RUNROOT / tag
+    Ts = ladder(args.tempering) if args.tempering else []
+    cfg = {'burnin': args.burnin, 'thin': args.thin, 'samples': args.samples,
+           'max_size': args.max_size, 'Ts': Ts,
+           'anneal_after': args.anneal_after}
 
     df_all = make_data(PLANETS).reset_index(drop=True)
+    # 对照 C：同样 5 x 60 个点、同样给 L 和 g，只是 g 不再在星球间变化。
+    df_constG = make_data({name: G_EARTH for name in PLANETS}
+                          ).reset_index(drop=True)
     df_earth = df_all[df_all['planet'] == 'Earth'].reset_index(drop=True)
+    frames = {'all': df_all, 'earth': df_earth, 'constG': df_constG}
 
     print('=' * 72)
     print('多星球单摆实验：米尺 0.01 m / 秒表 0.1 s 分辨率')
     print('=' * 72)
+    print(f'采样器 : ' + (f'{args.tempering} 温度并行回火 '
+                          f'(Ts = 1.04^k, k=0..{args.tempering - 1})，'
+                          f'停滞 {args.anneal_after} 样本后退火'
+                          if Ts else '单温度 Tree.mcmc'))
     print(f'先验 : {args.prior}（scale={args.scale:g}）')
     print(f'  一阶项 {len([k for k in prior_par if k.startswith("Nopi_")])} 个，'
           f'二阶项 {len([k for k in prior_par if k.startswith("Nopi2_")])} 个')
@@ -453,10 +610,13 @@ def main(argv=None):
           f'最短周期 {df_all["T"].min():.1f} s 处相对精度 ~'
           f'{DT/2/df_all["T"].min():.0%}')
 
-    # 对照 A 的变量集里没有 g，真公式在其空间内不可表达，故无参考值。
+    # 对照 A 只给 L：真律退化为 a*sqrt(L)，a = 2*pi/sqrt(g_earth)。
     refs = {
         'main': reference_tree(df_all, ['L', 'g'], prior_par),
+        'ctrlA_Lonly': reference_tree(df_earth, ['L'], prior_par,
+                                      formula='(_a_ * sqrt(L))'),
         'ctrlB_Lg': reference_tree(df_earth, ['L', 'g'], prior_par),
+        'ctrlC_constG': reference_tree(df_constG, ['L', 'g'], prior_par),
     }
     print(f'\n参考 _a_*sqrt(L/g)：'
           f'5星球 BIC = {refs["main"]["bic"]:.1f} '
@@ -464,10 +624,15 @@ def main(argv=None):
           f'E = {refs["main"]["E"]:.1f})；'
           f'仅地球 BIC = {refs["ctrlB_Lg"]["bic"]:.1f} '
           f'(a = {refs["ctrlB_Lg"]["a"]:.4f})；2*pi = {TWO_PI:.4f}')
+    print(f'  对照 C（g 恒定，300 点）BIC = {refs["ctrlC_constG"]["bic"]:.1f} '
+          f'(a = {refs["ctrlC_constG"]["a"]:.4f}, '
+          f'E = {refs["ctrlC_constG"]["E"]:.1f})')
+    print(f'  对照 A（只给 L，60 点）参考 a*sqrt(L)：'
+          f'BIC = {refs["ctrlA_Lonly"]["bic"]:.1f} '
+          f'(a = {refs["ctrlA_Lonly"]["a"]:.4f}，真值 2*pi/sqrt(9.81) = '
+          f'{TWO_PI / np.sqrt(G_EARTH):.4f})')
 
     if not args.analyze_only:
-        cfg = {'burnin': args.burnin, 'thin': args.thin,
-               'samples': args.samples}
         tasks = []
         for i in range(args.chains_main):
             # 种子与文件名都按 seed_offset 平移，便于在已有 run 上追加链。
@@ -480,16 +645,19 @@ def main(argv=None):
         for i in range(args.chains_ctrl):
             tasks.append((3000 + i, df_earth, ['L', 'g'], 'ctrlB_Lg', i,
                           prior_par, str(rundir), cfg))
+        for i in range(args.chains_ctrl):
+            tasks.append((4000 + i, df_constG, ['L', 'g'], 'ctrlC_constG', i,
+                          prior_par, str(rundir), cfg))
 
         print(f'\n并行运行 {len(tasks)} 条链'
               f'（burnin={args.burnin}, thin={args.thin}, '
-              f'samples={args.samples}）...')
+              f'samples={args.samples}, max_size={args.max_size}）...')
         with Pool(min(len(tasks), 16)) as pool:
-            for k, fn in enumerate(pool.imap_unordered(run_chain, tasks)):
-                print(f'  [{k + 1}/{len(tasks)}] 完成: {Path(fn).name}',
-                      flush=True)
+            for k, done in enumerate(pool.imap_unordered(run_chain, tasks)):
+                print(f'  [{k + 1}/{len(tasks)}] 完成: '
+                      f'{Path(done["trace_fn"]).name}', flush=True)
 
-    results = analyze_run(rundir, df_all, df_earth)
+    results = analyze_run(rundir, frames)
     print_results(results, args.prior, prior_par, refs)
 
     if not args.no_fig and results:
@@ -498,11 +666,26 @@ def main(argv=None):
         print(f'\n图已保存: {fig_path}')
 
     rundir.mkdir(parents=True, exist_ok=True)
+    observed = {t: sorted(int(f.stem.replace(f'trace_{t}_', ''))
+                          for f in rundir.glob(f'trace_{t}_*.dat'))
+                for t, _ in SCENARIOS}
     with open(rundir / 'summary.json', 'w') as f:
         json.dump({'prior': args.prior, 'scale': args.scale,
                    'prior_par': prior_par,
-                   'config': {'burnin': args.burnin, 'thin': args.thin,
-                              'samples': args.samples},
+                   'config': cfg,
+                   'provenance': dict(
+                       git_state(),
+                       # --analyze-only 下的 git 态是"分析时"而非"采样时"，
+                       # 别拿它判断这批迹线能不能用。
+                       recorded_at='analysis' if args.analyze_only else 'sampling',
+                       data_seed=DATA_SEED,
+                       tempering=args.tempering or None,
+                       Ts=Ts or None,
+                       observed_chains=observed,
+                       scenario_frames={t: SCENARIO_FRAME[t]
+                                        for t, _ in SCENARIOS},
+                       n_rows={k: len(v) for k, v in frames.items()},
+                   ),
                    'reference': refs, 'results': results},
                   f, indent=2, default=str)
     print(f'汇总已保存: {rundir / "summary.json"}')
