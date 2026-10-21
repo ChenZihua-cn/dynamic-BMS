@@ -11,4 +11,5 @@ prior/__pycache__
 .pytest_cache
 *.dat
 *:Zone.Identifier
-experiments/pendulum/*_runs/
+experiments/pendulum/**/*_runs/
+experiments/pendulum/**/__pycache__/
