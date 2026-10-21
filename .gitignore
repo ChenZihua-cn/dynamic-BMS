@@ -14,3 +14,4 @@ prior/__pycache__
 experiments/pendulum/**/*_runs/
 experiments/pendulum/**/__pycache__/
 experiments/pendulum/trace_graph_figs/*.png
+temp/
