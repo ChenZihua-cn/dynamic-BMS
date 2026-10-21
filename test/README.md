@@ -34,7 +34,7 @@
 | [test_dimensions.py](test_dimensions.py) | 量纲齐次性：宪法约束、根量纲锚定与单摆家族 | 34 |
 | [test_prior.py](test_prior.py) | 先验超参数：登记覆盖、EP 记账一致、落盘往返、语料校准 | 46 |
 | [test_parliament.py](test_parliament.py) | 议会动力学：软先验能量、权重、门控级联 | 27 |
-| [test_statistics.py](test_statistics.py) | 统计物理观测：拒绝率、细致平衡、轨迹 | 7 |
+| [test_statistics.py](test_statistics.py) | 统计物理观测：拒绝率、细致平衡、轨迹、回火阶梯 | 11 |
 
 ## 各实验文件
 
@@ -108,6 +108,9 @@ sqrt 只把量纲指数折半（分数维合法，`a·√L` 与 `L**b` 的量纲
   dE>0（≈0.16）——提议比修正使精确比率匹配不成立，故只检验方向性
 - 轨迹记录完整性与系综预测（trace_predict）
 - 链的涨落（BIC/Energy 非常数 = 未冻结）与预测-实测关联（> 0.5）
+- 并行回火阶梯（`core/parallel.py`）：构造前提（少于 2 个温度、或缺 BT=1
+  冷副本都必须被点名拒绝）；交换自洽性（槽位温度、能量记账、退火后归位、
+  交换能传到冷副本）；停滞退火触发；回火迹线与单温度格式逐字段兼容
 
 ## 可复现性说明
 

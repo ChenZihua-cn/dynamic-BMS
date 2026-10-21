@@ -21,4 +21,8 @@ class Tree(TreeBase, EnergyMixin, ProposalMixin, MCMCMixin, ExpertMixin):
     pass
 
 
-__all__ = ['Node', 'Tree', 'OPS']
+# Imported after Tree exists: parallel.py resolves Tree lazily at call time.
+from .parallel import Parallel
+
+
+__all__ = ['Node', 'Tree', 'Parallel', 'OPS']

@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-from core import Tree, OPS
+from core import Tree, Parallel, OPS
 from experts.constitution.dimensional import DimensionalConstitution
 from experts.parliament.occam import OccamPrior
 from test.lab import (check, check_above, check_below, measure,
@@ -433,6 +433,126 @@ def test_prediction_correlation():
     ax.legend()
     fig.savefig('/tmp/test_viz_pred_vs_actual.png', dpi=100)
     plt.close(fig)
+
+
+# ============================================================================
+# 实验 8-11：并行回火阶梯（replica exchange）
+# ============================================================================
+
+LADDER_TS = [1] + [1.04 ** k for k in range(1, 8)]
+
+
+def _ladder(Ts=LADDER_TS, seed=7):
+    reproducible_state(seed)
+    n = 30
+    L_vals = np.linspace(0.5, 2.0, n)
+    x = pd.DataFrame({'L': L_vals, 'g': [9.81] * n})
+    y = pd.Series(2 * np.pi * np.sqrt(L_vals / 9.81)
+                  + np.random.normal(0, 0.02, n))
+    return Parallel(
+        list(Ts), variables=['L', 'g'], parameters=['a', 'b'],
+        dimensions=PENDULUM_DIMS,
+        constitutions=[DimensionalConstitution()],
+        x=x, y=y, max_size=30, prior_par=PRIOR_UNIT,
+    )
+
+
+def test_ladder_requires_a_real_ladder():
+    """构造前提：少于 2 个温度或缺 BT=1 冷副本都必须点名拒绝，而不是跑起来才炸。"""
+    section("回火阶梯的构造前提")
+    for Ts, needle in ([[1], 'at least 2 temperatures'],
+                       [[2, 5], 'must include BT = 1.0']):
+        msg = ''
+        try:
+            _ladder(Ts=Ts)
+        except ValueError as e:
+            msg = str(e)
+        check("拒绝 %s" % (Ts,), needle in msg, True)
+
+
+def test_ladder_exchange_consistency():
+    """交换只搬表达式、不搬温度：槽位 BT、能量记账、退火归位三处必须自洽。"""
+    section("并行回火阶梯：交换自洽性")
+    p = _ladder()
+    check("阶梯副本数", len(p.trees), len(p.Ts))
+    check("拟合缓存跨副本共享",
+          all(t.fit_par is p.t1.fit_par for t in p.trees.values()), True)
+    check("简并代表表跨副本共享",
+          all(t.representative is p.t1.representative
+              for t in p.trees.values()), True)
+
+    n_steps = 400
+    n_acc, n_bad_slot, n_bad_energy = 0, 0, 0
+    cold_forms = {str(p.t1)}
+    for i in range(n_steps):
+        p.mcmc_step()
+        if p.tree_swap() != (None, None):
+            n_acc += 1
+        for BT, t in p.trees.items():
+            if abs(t.BT - BT) > 1e-12:
+                n_bad_slot += 1
+            if abs(float(t.E) - float(t.get_energy(reset=False)[0])) \
+                    > 1e-6 * max(1.0, abs(float(t.E))):
+                n_bad_energy += 1
+        cold_forms.add(str(p.t1))
+
+    check_above("阶梯交换接受率", n_acc / float(n_steps), 0.1,
+                context='%d 次尝试' % n_steps)
+    check("温度槽位自洽违例数", n_bad_slot, 0)
+    check("能量记账自洽违例数", n_bad_energy, 0)
+    check_above("冷副本访问过的不同表达式数", len(cold_forms), 1,
+                context='交换须能传到 BT=1')
+
+    p.anneal(n=20, factor=3)
+    check("退火后阶梯归位违例数",
+          sum(0 if abs(t.BT - BT) < 1e-12 else 1
+              for BT, t in p.trees.items()), 0)
+
+
+def test_ladder_trace_matches_single_temperature_schema():
+    """回火迹线必须能被读单温度迹线的分析代码原样消费（6 字段、行数 = samples）。"""
+    section("回火迹线与单温度格式兼容")
+    p = _ladder(Ts=[1, 1.5, 2.5, 4.0])
+    trace_fn = '/tmp/test_ladder_trace.dat'
+    progress_fn = '/tmp/test_ladder_progress.dat'
+    n_annealed = p.mcmc(tracefn=trace_fn, progressfn=progress_fn,
+                        burnin=300, thin=5, samples=25,
+                        progress=False, anneal_after=0)
+
+    with open(trace_fn) as f:
+        lines = f.readlines()
+    check("回火 trace 行数", len(lines), 25)
+    for i, line in enumerate(lines):
+        record = json.loads(line)
+        check("记录字段数", len(record), 6, context=f"line {i}")
+        check("sample id 为整数", isinstance(record[0], int), True,
+              context=f"line {i}")
+        check("BIC 为浮点", isinstance(record[1], float), True,
+              context=f"line {i}")
+        check("Energy 为浮点", isinstance(record[2], float), True,
+              context=f"line {i}")
+    with open(progress_fn) as f:
+        check("回火 progress 行数", len(f.readlines()), 25)
+    check("退火触发次数", n_annealed, 0)
+
+
+def test_ladder_anneal_on_stall():
+    """停滞判据按 MCMC 步数算：用一副温度跨度过大、几乎换不动的阶梯验证退火真的触发。"""
+    section("回火阶梯：停滞退火")
+    # BT=1 与 BT=1e4 之间 EB 差几百 nat，交换接受率 ≈ 0，阶梯必然停滞。
+    p = _ladder(Ts=[1, 1e4])
+    n_annealed = p.mcmc(tracefn='/tmp/test_ladder_anneal_trace.dat',
+                        progressfn='/tmp/test_ladder_anneal_progress.dat',
+                        burnin=100, thin=2, samples=30,
+                        progress=False, anneal_after=40, anneal_factor=3.)
+    check_above("停滞退火触发次数", n_annealed, 0)
+    check("退火后阶梯归位违例数",
+          sum(0 if abs(t.BT - BT) < 1e-12 else 1
+              for BT, t in p.trees.items()), 0)
+    with open('/tmp/test_ladder_anneal_trace.dat') as f:
+        lines = f.readlines()
+    check("退火后 trace 仍完整", len(lines), 30)
+    check("退火后记录字段数", len(json.loads(lines[-1])), 6)
 
 
 if __name__ == '__main__':
