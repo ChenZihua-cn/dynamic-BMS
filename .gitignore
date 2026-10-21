@@ -1,1 +1,18 @@
-core/__pycache__
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Editor / OS
+.vscode/
+*:Zone.Identifier
+
+# MCMC run artifacts
+*.dat
+temp/
+
+# Pendulum experiments
+experiments/pendulum/**/*_runs/
+experiments/pendulum/**/__pycache__/
+experiments/pendulum/trace_graph_figs/*.png
