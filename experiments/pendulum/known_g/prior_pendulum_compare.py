@@ -2,7 +2,7 @@
 
 用法::
 
-    .venv/bin/python experiments/pendulum/prior_pendulum_compare.py \
+    .venv/bin/python experiments/pendulum/known_g/prior_pendulum_compare.py \
         flat1.0 bms_wiki_nv13_np13 bms_wiki_nv13_np13_x0.5 ...
 
 不传参数时自动收集 ``pendulum_runs`` 下所有含 summary.json 的目录，
@@ -17,7 +17,7 @@ import sys
 import json
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import numpy as np
 import matplotlib
