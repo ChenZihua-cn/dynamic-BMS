@@ -13,3 +13,4 @@ prior/__pycache__
 *:Zone.Identifier
 experiments/pendulum/**/*_runs/
 experiments/pendulum/**/__pycache__/
+experiments/pendulum/trace_graph_figs/*.png
