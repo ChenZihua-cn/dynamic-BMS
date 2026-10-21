@@ -248,7 +248,7 @@ def _rule_pow3(child_exprs):
 
 
 def _rule_sqrt(child_exprs):
-    """sqrt — halve the dimension. Evenness checked separately."""
+    """sqrt — halve the dimension."""
     return Fraction(1, 2) * child_exprs[0], []
 
 

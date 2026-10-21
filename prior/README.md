@@ -8,7 +8,7 @@
 4080 条公式校准出来的先验参数——但它们硬编码在 `test3()` / `test4()` /
 `test5()` 三个演示函数的函数体里（第 1467 / 1503 / 1524 行），
 `Tree(prior_par=...)` 根本拿不到。于是本项目一直在用平值 `Nopi=1.0`
-（`experiments/pendulum/pendulum.py`）或内建默认 `10.0`（`core/tree_base.py`）跑实验，
+（`experiments/pendulum/known_g/pendulum.py`）或内建默认 `10.0`（`core/tree_base.py`）跑实验，
 即"先验通道是通的，但流经它的数字不是校准出来的"。
 
 这个目录就是那条断掉的接线。

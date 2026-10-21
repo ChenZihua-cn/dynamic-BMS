@@ -6,8 +6,8 @@
 不当作输入变量、也不告知。问：只用 (L, T)，原仓库的贝叶斯机器科学家能否
 还原周期的幂律形式 T = a * L**b，并且 b ~= 0.5？
 
-与 `experiments/pendulum/pendulum.py` 的区别
----------------------------------
+与 `experiments/pendulum/known_g/pendulum.py` 的区别
+----------------------------------------------------
 本脚本**完全绕开本地 core/**，直接用上游仓库快照的计算代码：
 
 * `mcmc.py`  —— Tree / OPS / 能量 / MCMC（无宪法层、无量纲约束）
@@ -58,7 +58,7 @@ warnings.filterwarnings('ignore')
 
 HERE = Path(__file__).resolve().parent
 UPSTREAM = Path(os.environ.get(
-    'UPSTREAM_BMS', str(HERE.parents[2] / 'upstream-bms'))).resolve()
+    'UPSTREAM_BMS', str(HERE.parents[3] / 'upstream-bms'))).resolve()
 sys.path.insert(0, str(UPSTREAM))
 sys.path.insert(0, str(UPSTREAM / 'Prior'))
 

@@ -26,7 +26,7 @@ warnings.filterwarnings('ignore')
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE.parents[2]))
 
 import upstream_lT_powerlaw as U
 from core import Tree, OPS
