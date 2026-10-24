@@ -1,10 +1,13 @@
 # core/energy.py
 
 import sys
+from collections.abc import Callable
+from typing import Any
+
 import numpy as np
 import scipy
 import pandas as pd
-from sympy import sympify, lambdify, log
+from sympy import Symbol, lambdify, log, sympify
 from scipy.optimize import curve_fit
 from copy import deepcopy
 
@@ -13,9 +16,15 @@ class EnergyMixin:
     """Energy and goodness-of-fit calculations for Tree."""
 
     # -------------------------------------------------------------------------
-    def get_sse(self, fit=True, verbose=False):
-        """Get the sum of squared errors, fitting the expression represented by the Tree to the existing data, if specified (by default, yes).
+    def get_sse(
+        self,
+        fit: bool = True,
+        verbose: bool = False,
+    ) -> dict[str, float] | int:
+        """Return the sum of squared errors for each dataset.
 
+        If ``fit`` is true, the free parameters of the expression are fitted
+        with ``scipy.optimize.curve_fit`` before the errors are evaluated.
         """
         # Return 0 if there is no data
         if list(self.x.values())[0].empty or list(self.y.values())[0].empty:
@@ -25,90 +34,125 @@ class EnergyMixin:
         ex = sympify(str(self))
         # Convert the expression to a function that can be used by
         # curve_fit, i.e. that takes as arguments (x, a0, a1, ..., an)
-        atomd = dict([(a.name, a) for a in ex.atoms() if a.is_Symbol])
-        variables = [atomd[v] for v in self.variables + self.extra_variables
-                     if v in list(atomd.keys())]
-        parameters = [atomd[p] for p in self.parameters + self.fixed_parameters
-                      if p in list(atomd.keys())]
+        atomd = {a.name: a for a in ex.atoms() if a.is_Symbol}
+        variables = [
+            atomd[v] for v in self.variables + self.extra_variables
+            if v in atomd
+        ]
+        parameters = [
+            atomd[p] for p in self.parameters + self.fixed_parameters
+            if p in atomd
+        ]
         try:
             flam = lambdify(
-                variables + parameters, ex, [
-                    "numpy",
-                    {'fac' : scipy.special.factorial}
-                ])
-        except:
-            self.sse = dict([(ds, np.inf) for ds in self.x])
+                variables + parameters,
+                ex,
+                ["numpy", {'fac': scipy.special.factorial}],
+            )
+        except Exception:
+            self.sse = {ds: np.inf for ds in self.x}
             return self.sse
+
         if fit:
-            if len(parameters) == 0: # Nothing to fit
-                for ds in self.x:
-                    for p in self.parameters:
-                        self.par_values[ds][p] = 1.
-                    for p in self.fixed_parameters:
-                        self.par_values[ds][p] = 1.
-            elif str(self) in self.fit_par: # Recover previously fit parameters
-                self.par_values = self.fit_par[str(self)]
-            else:                    # Do the fit for all datasets
-                self.fit_par[str(self)] = {}
-                for ds in self.x:
-                    this_x, this_y = self.x[ds], self.y[ds]
-                    xmat = [this_x[v.name] for v in variables]
-                    def feval(x, *params):
-                        args = [xi for xi in x] + [p for p in params]
-                        return flam(*args)
-                    try:
-                        # Fit the parameters
-                        res = curve_fit(
-                            feval, xmat, this_y,
-                            p0=[self.par_values[ds][p.name]
-                                for p in parameters],
-                            maxfev=10000,
-                        )
-                        # Reassign the values of the parameters
-                        self.par_values[ds] = dict(
-                            [(parameters[i].name, res[0][i])
-                             for i in range(len(res[0]))]
-                        )
-                        for p in self.parameters + self.fixed_parameters:
-                            if p not in self.par_values[ds]:
-                                self.par_values[ds][p] = 1.
-                        # Save this fit
-                        self.fit_par[str(self)][ds] = deepcopy(
-                            self.par_values[ds]
-                        )
-                    except:
-                        # Save this (unsuccessful) fit and print warning
-                        self.fit_par[str(self)][ds] = deepcopy(
-                            self.par_values[ds]
-                        )
-                        if verbose:
-                            print('#Cannot_fit:%s # # # # #' % str(self).replace(' ', ''), file=sys.stderr)
+            self.estimate_parameters(parameters, variables, flam, verbose=verbose)
 
         # Sum of squared errors
         self.sse = {}
         for ds in self.x:
             this_x, this_y = self.x[ds], self.y[ds]
             xmat = [this_x[v.name] for v in variables]
-            ar = [np.array(xi) for xi in xmat] + \
-                 [self.par_values[ds][p.name] for p in parameters]
+            args = [np.array(xi) for xi in xmat] + [
+                self.par_values[ds][p.name] for p in parameters
+            ]
             try:
-                se = np.square(this_y - flam(*ar))
-                if sum(np.isnan(se)) > 0:
+                se = np.square(this_y - flam(*args))
+                if np.any(np.isnan(se)):
                     raise ValueError
-                else:
-                    self.sse[ds] = np.sum(se)
-            except:
+                self.sse[ds] = np.sum(se)
+            except Exception:
                 if verbose:
-                    print('> Cannot calculate SSE for %s: inf' % self, file=sys.stderr)
+                    print(
+                        f'> Cannot calculate SSE for {self}: inf',
+                        file=sys.stderr,
+                    )
                 self.sse[ds] = np.inf
 
         # Done
         return self.sse
 
-    # -------------------------------------------------------------------------
-    def get_bic(self, reset=True, fit=False, verbose=False):
-        """Calculate the Bayesian information criterion (BIC) of the current expression, given the data. If reset==False, the value of self.bic will not be updated (by default, it will).
+    def estimate_parameters(
+        self,
+        parameters: list[Symbol],
+        variables: list[Symbol],
+        flam: Callable[..., Any],
+        verbose: bool = False,
+    ) -> None:
+        """Estimate the expression's free parameters for every dataset.
 
+        Parameter values are stored in ``self.par_values`` and cached in
+        ``self.fit_par`` under the expression string. If estimation fails,
+        the current values are cached and, when ``verbose`` is true, reported.
+        """
+        if not parameters:  # Nothing to fit
+            for ds in self.x:
+                for p in self.parameters + self.fixed_parameters:
+                    self.par_values[ds][p] = 1.0
+            return
+
+        expression = str(self)
+        if expression in self.fit_par:  # Recover previously fit parameters
+            self.par_values = self.fit_par[expression]
+            return
+
+        # Do the fit for all datasets
+        self.fit_par[expression] = {}
+        for ds in self.x:
+            this_x, this_y = self.x[ds], self.y[ds]
+            xmat = [this_x[v.name] for v in variables]
+
+            def feval(x, *params):
+                return flam(*x, *params)
+
+            try:
+                # Fit the parameters
+                res = curve_fit(
+                    feval,
+                    xmat,
+                    this_y,
+                    p0=[self.par_values[ds][p.name] for p in parameters],
+                    maxfev=10000,
+                )
+                # Reassign the values of the parameters
+                self.par_values[ds] = {
+                    parameters[i].name: res[0][i]
+                    for i in range(len(res[0]))
+                }
+                for p in self.parameters + self.fixed_parameters:
+                    if p not in self.par_values[ds]:
+                        self.par_values[ds][p] = 1.0
+                # Save this fit
+                self.fit_par[expression][ds] = deepcopy(self.par_values[ds])
+            except Exception:
+                # Save this (unsuccessful) fit and print warning
+                self.fit_par[expression][ds] = deepcopy(self.par_values[ds])
+                if verbose:
+                    print(
+                        f"#Cannot_fit:{str(self).replace(' ', '')} # # # # #",
+                        file=sys.stderr,
+                    )
+
+    # -------------------------------------------------------------------------
+    def get_bic(
+        self,
+        reset: bool = True,
+        fit: bool = False,
+        verbose: bool = False,
+    ) -> float:
+        """Return the Bayesian information criterion summed over all datasets.
+
+        ``fit`` is forwarded to :meth:`get_sse`. The parameter count is one
+        plus the number of distinct parameters, including fixed ones. If
+        ``reset`` is true, ``self.bic`` is updated.
         """
         if list(self.x.values())[0].empty or list(self.y.values())[0].empty:
             if reset:
@@ -117,81 +161,93 @@ class EnergyMixin:
         # Get the sum of squared errors (fitting, if required)
         sse = self.get_sse(fit=fit, verbose=verbose)
         # Calculate the BIC
-        parameters = set(
-            [p.value for p in self.ets[0] if p.value in self.parameters] + \
-            self.fixed_parameters
-        )
+        parameters = {
+            p.value for p in self.ets[0] if p.value in self.parameters
+        } | set(self.fixed_parameters)
         k = 1 + len(parameters)
-        BIC = 0.
+
+        bic = 0.0
         for ds in self.y:
             n = len(self.y[ds])
-            BIC += (k - n) * np.log(n) + n * (np.log(2. * np.pi) + log(sse[ds]) + 1)
-        if reset == True:
-            self.bic = BIC
-        return BIC
+            bic += (k - n) * np.log(n) + n * (
+                np.log(2.0 * np.pi) + log(sse[ds]) + 1
+            )
+
+        if reset:
+            self.bic = bic
+        return bic
 
     # -------------------------------------------------------------------------
-    def get_energy(self, bic=False, reset=False, verbose=False):
-        """Calculate the "energy" of a given formula, that is, approximate minus log-posterior of the formula given the data (the approximation coming from the use of the BIC instead of the exactly integrated likelihood).
+    def get_energy(
+        self,
+        bic: bool = False,
+        reset: bool = False,
+        verbose: bool = False,
+    ) -> tuple[float, float, float]:
+        """Return the energy as an approximation to minus the log-posterior.
 
+        The data term uses the BIC in place of the exactly integrated
+        likelihood. If ``bic`` is true, the BIC is recalculated first; if
+        ``reset`` is true, ``self.E``, ``self.EB``, and ``self.EP`` are
+        updated.
         """
         # Contribtution of the data (recalculating BIC if necessary)
-        if bic == True:
-            EB = self.get_bic(reset=reset, verbose=verbose) / 2.
+        if bic:
+            data_energy = self.get_bic(reset=reset, verbose=verbose) / 2.0
         else:
-            EB = self.bic / 2.
+            data_energy = self.bic / 2.0
         # Contribution from the prior
-        EP = 0.0
-        for op, nop in list(self.nops.items()):
+        prior_energy = 0.0
+        for op, nop in self.nops.items():
             try:
-                EP += self.prior_par['Nopi_%s' % op] * nop
+                prior_energy += self.prior_par[f"Nopi_{op}"] * nop
             except KeyError:
                 pass
             try:
-                EP += self.prior_par['Nopi2_%s' % op] * nop**2
+                prior_energy += self.prior_par[f"Nopi2_{op}"] * nop**2
             except KeyError:
                 pass
         # Parliament structural penalty (Phase 1: structural only)
         if self.parliaments:
-            EP += self._parliament_energy_structural()
+            prior_energy += self._parliament_energy_structural()
+
+        total_energy = data_energy + prior_energy
         # Reset the value, if necessary
         if reset:
-            self.EB = EB
-            self.EP = EP
-            self.E = EB + EP
+            self.EB = data_energy
+            self.EP = prior_energy
+            self.E = total_energy
         # Done
-        return EB + EP, EB, EP
+        return total_energy, data_energy, prior_energy
 
     # -------------------------------------------------------------------------
-    def update_representative(self, verbose=False):
-        """
-Check if we've seen this formula before, either in its current form or in another form.
+    def update_representative(self, verbose: bool = False) -> int:
+        """Register this formula's canonical form or classify it against the representative.
 
-*If we haven't seen it, save it and return 1.
-
-*If we have seen it and this IS the representative, just return 0.
-
-*If we have seen it and the representative has smaller energy, just return -1.
-
-*If we have seen it and the representative has higher energy, update
-the representatitve and return -2.
-
+        Returns 1 for a newly seen canonical form (after fitting and storing
+        it), 0 if this tree is the stored representative, and -1 if a
+        different tree is. Once registered, a representative is never replaced.
         """
         # Check for canonical representative
         canonical = self.canonical(verbose=verbose)
-        try:             # We've seen this canonical before!
-            rep, rep_energy, rep_par_values = self.representative[canonical]
-        except KeyError: # Never seen this canonical formula before:
-                         # save it and return 1
+
+        if canonical not in self.representative:
+            # Never seen this canonical formula before:
+            # save it and return 1
             self.get_bic(reset=True, fit=True, verbose=verbose)
             new_energy = self.get_energy(bic=False, verbose=verbose)
-            self.representative[canonical] = (str(self), new_energy,
-                                              deepcopy(self.par_values))
+            self.representative[canonical] = (
+                str(self),
+                new_energy,
+                deepcopy(self.par_values),
+            )
             return 1
 
         # If we've seen this canonical before, check if the
         # representative needs to be updated
-        if rep == str(self): # This IS the representative: return 0
+        # We've seen this canonical before!
+        representative, _, _ = self.representative[canonical]
+        if representative == str(self):  # This IS the representative: return 0
             return 0
         else:
             # CAUTION: CHANGED TO NEVER UPDATE REPRESENTATIVE!!!!!!!!
