@@ -8,8 +8,11 @@ as expected, and that basic MCMC moves still execute without error.
 
 import sys
 import json
+import random
 import pandas as pd
 import numpy as np
+
+random.seed(42)
 
 # ---------------------------------------------------------------------------
 # 1. Basic import smoke test
@@ -32,7 +35,7 @@ print("[PASS] Binary Node.pr() works")
 # ---------------------------------------------------------------------------
 # 3. Tree initialization (no data)
 # ---------------------------------------------------------------------------
-t = Tree(prior_par={'Nopi_+': 0, 'Nopi_*': 0, 'Nopi_-': 0, 'Nopi_/': 0})
+t = Tree(prior_par=dict([('Nopi_%s' % op, 0.0) for op in OPS]))
 print("[PASS] Tree initialized with no data")
 assert t.size == 1
 print(f"[INFO] Initial tree size: {t.size}, expression: {t}")
@@ -41,7 +44,7 @@ print(f"[INFO] Initial tree size: {t.size}, expression: {t}")
 # 4. Tree from string
 # ---------------------------------------------------------------------------
 t2 = Tree(
-    prior_par={'Nopi_+': 0, 'Nopi_*': 0, 'Nopi_-': 0, 'Nopi_/': 0},
+    prior_par=dict([('Nopi_%s' % op, 0.0) for op in OPS]),
     from_string='(x + _a0_)'
 )
 print(f"[PASS] Tree built from string: {t2}")
@@ -58,6 +61,7 @@ assert len(can) > 0
 # ---------------------------------------------------------------------------
 # 6. MCMC step on empty data (no crash)
 # ---------------------------------------------------------------------------
+random.seed(42)
 for i in range(5):
     t2.mcmc_step()
 print("[PASS] 5 MCMC steps on no-data tree completed without error")
@@ -66,6 +70,7 @@ print("[PASS] 5 MCMC steps on no-data tree completed without error")
 # 7. Tree with data: build and run a few MCMC steps
 # ---------------------------------------------------------------------------
 np.random.seed(42)
+random.seed(42)
 x = pd.DataFrame({'x0': np.linspace(0, 10, 20)})
 y = 2 * x['x0'] + 1 + np.random.normal(0, 0.1, 20)
 
@@ -73,7 +78,7 @@ t3 = Tree(
     variables=['x0'],
     parameters=['a0', 'a1'],
     x=x, y=y,
-    prior_par={'Nopi_+': 1.0, 'Nopi_*': 1.0, 'Nopi_-': 1.0, 'Nopi_/': 1.0},
+    prior_par=dict([('Nopi_%s' % op, 1.0) for op in OPS]),
     max_size=10,
 )
 print(f"[INFO] Data tree initial: {t3}, size={t3.size}, BIC={t3.bic:.2f}, E={t3.E:.2f}")
@@ -156,6 +161,7 @@ def run_synthetic_test(name, ground_truth, variables, n_train=30, n_test=20,
                     initial_E, final_E, final_expr, trace_file.
     """
     np.random.seed(42)
+    random.seed(42)
 
     # --- 1. Generate synthetic data ---
     x_train = pd.DataFrame({
@@ -351,6 +357,7 @@ assert res['test_r2'] > 0.5, \
 # 12. Trace file write test (regression for file output)
 # ---------------------------------------------------------------------------
 np.random.seed(99)
+random.seed(99)
 x = pd.DataFrame({'x0': np.linspace(0, 5, 15)})
 y = 1.5 * x['x0'] + np.random.normal(0, 0.2, 15)
 

@@ -9,30 +9,19 @@ class Node:
         self.order = len(self.offspring)
         return
 
-    def pr(self, show_pow=False):
-        if self.offspring == []:
-            return '%s' % self.value
-        elif len(self.offspring) == 2:
-            return '(%s %s %s)' % (self.offspring[0].pr(show_pow=show_pow),
-                                   self.value,
-                                   self.offspring[1].pr(show_pow=show_pow))
-        else:
-            if show_pow:
-                return '%s(%s)' % (self.value,
-                                   ','.join([o.pr(show_pow=show_pow)
-                                             for o in self.offspring]))
-            else:
-                if self.value == 'pow2':
-                    return '(%s ** 2)' % (
-                        self.offspring[0].pr(show_pow=show_pow)
-                    )
-                elif self.value == 'pow3':
-                    return '(%s ** 3)' % (
-                        self.offspring[0].pr(show_pow=show_pow)
-                    )
-                else:
-                    return '%s(%s)' % (
-                        self.value,
-                        ','.join([o.pr(show_pow=show_pow)
-                                  for o in self.offspring])
-                    )
+    def pr(self, show_pow: bool = False) -> str:
+        """Render this subtree as an expression string.
+
+        ``show_pow`` keeps pow2/pow3 in function form; otherwise they are
+        written as ``** 2`` and ``** 3``.
+        """
+        match self.offspring:
+            case []:
+                return str(self.value)
+            case [left, right]:
+                return f"({left.pr(show_pow)} {self.value} {right.pr(show_pow)})"
+            case children if not show_pow and self.value in {"pow2", "pow3"}:
+                return f"({children[0].pr(show_pow)} ** {self.value[-1]})"
+            case children:
+                args = ",".join(child.pr(show_pow) for child in children)
+                return f"{self.value}({args})"

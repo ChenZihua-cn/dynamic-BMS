@@ -15,38 +15,70 @@ class TreeBase:
     """ The Tree class - base structure and initialization."""
 
     # -------------------------------------------------------------------------
-    def __init__(self, ops=OPS, variables=['x'], parameters=['a'],
-                 prior_par={}, x=None, y=None, BT=1., PT=1.,
-                 max_size=50,
-                 root_value=None, from_string=None,
-                 fixed_term=None, fixed_term_op='*', extra_variables=[],
-                 ):
+    def __init__(
+        self,
+        ops: dict[str, int] = OPS,
+        variables: list[str] = ["x"],
+        parameters: list[str] = ["a"],
+        prior_par: dict[str, float] = {},
+        x: pd.DataFrame | dict[str, pd.DataFrame] | None = None,
+        y: pd.Series | dict[str, pd.Series] | None = None,
+        BT: float = 1.0,
+        PT: float = 1.0,
+        max_size: int = 50,
+        root_value: str | None = None,
+        from_string: str | None = None,
+        fixed_term: str | None = None,
+        fixed_term_op: str = "*",
+        extra_variables: list[str] = [],
+    ):
+        """Initialize a formula tree and its goodness-of-fit state.
+
+        ``ops`` maps operation names to their number of offspring, and
+        ``variables``/``parameters`` list the allowed leaves. ``prior_par``
+        holds the operation-count prior; when empty, each operation gets the
+        default prior. ``max_size`` bounds the tree during moves, while ``BT``
+        and ``PT`` set the temperatures of the data and prior terms.
+
+        The data are either a DataFrame (stored under ``d0``) or a mapping
+        from dataset labels to DataFrames. ``root_value`` fixes the root,
+        otherwise it is drawn at random; ``from_string`` builds the full tree
+        from a BMS expression. A fixed prefactor can be supplied through
+        ``fixed_term`` and ``fixed_term_op``, with ``extra_variables``
+        available to that term only.
+        """
         # The variables and parameters
         self.variables = variables
-        self.parameters = [p if p.startswith('_') and p.endswith('_')
-                           else '_%s_' % p
-                           for p in parameters]
+        self.parameters = [
+            p if p.startswith("_") and p.endswith("_") else f"_{p}_"
+            for p in parameters
+        ]
         # The root
-        if root_value == None:
-            self.root = Node(choice(self.variables+self.parameters),
-                             offspring=[],
-                             parent=None)
+        if root_value is None:
+            self.root = Node(
+                choice(self.variables + self.parameters),
+                offspring=[],
+                parent=None,
+            )
         else:
-            self.root = Node(root_value,
-                             offspring=[],
-                             parent=None)
+            self.root = Node(root_value, offspring=[], parent=None)
         # The possible operations
         self.ops = ops
         # The possible orders of the operations, move types, and move
         # type probabilities
-        self.op_orders = list(set([0] + [n for n in list(ops.values())]))
-        self.move_types = [p for p in permutations(self.op_orders, 2)]
+        self.op_orders = list(set([0, *ops.values()]))
+        self.move_types = list(permutations(self.op_orders, 2))
         # Elementary trees (including leaves), indexed by order
-        self.ets = dict([(o, []) for o in self.op_orders])
+        self.ets = {order: [] for order in self.op_orders}
         self.ets[0] = [self.root]
         # Distinct parameters used
-        self.dist_par = list(set([n.value for n in self.ets[0]
-                                  if n.value in self.parameters]))
+        self.dist_par = list(
+            {
+                node.value
+                for node in self.ets[0]
+                if node.value in self.parameters
+            }
+        )
         self.n_dist_par = len(self.dist_par)
         # Nodes of the tree (operations + leaves)
         self.nodes = [self.root]
@@ -60,27 +92,27 @@ class TreeBase:
         self.rr_space = self.build_rr_space()
         self.num_rr = len(self.rr_space)
         # Number of operations of each type
-        self.nops = dict([[o, 0] for o in ops])
+        self.nops = {op: 0 for op in ops}
         # The parameters of the prior propability (default: 5 everywhere)
-        if prior_par == {}:
-            self.prior_par = dict([('Nopi_%s' % t, 10.) for t in self.ops])
+        if not prior_par:
+            self.prior_par = {f"Nopi_{op}": 10.0 for op in self.ops}
         else:
             self.prior_par = prior_par
         # The datasets
         if x is None:
-            self.x = {'d0' : pd.DataFrame()}
-            self.y = {'d0' : pd.Series(dtype=float)}
+            self.x = {"d0": pd.DataFrame()}
+            self.y = {"d0": pd.Series(dtype=float)}
         elif isinstance(x, pd.DataFrame):
-            self.x = {'d0' : x}
-            self.y = {'d0' : y}
+            self.x = {"d0": x}
+            self.y = {"d0": y}
         elif isinstance(x, dict):
             self.x = x
             if y is None:
-                self.y = dict([(ds, pd.Series(dtype=float)) for ds in self.x])
+                self.y = {ds: pd.Series(dtype=float) for ds in self.x}
             else:
                 self.y = y
         else:
-            raise TypeError('x must be either a dict or a pandas.DataFrame')
+            raise TypeError("x must be either a dict or a pandas.DataFrame")
         # To specify a fixed-form prefactor. This must have proper BMS
         # syntax, and will be multiplied by whatever the actual tree
         # is. If necessary, extra variables can be added. These will
@@ -91,26 +123,27 @@ class TreeBase:
         self.fixed_term = fixed_term
         self.fixed_term_op = fixed_term_op
         self.extra_variables = extra_variables
-        if fixed_term == None:
+        if fixed_term is None:
             self.fixed_parameters = []
         else:
             self.fixed_parameters = [
-                p for p in
-                fixed_term.replace('(', ' ').replace(')', ' ').split()
-                if p.startswith('_') and p.endswith('_')
+                p
+                for p in fixed_term.replace("(", " ").replace(")", " ").split()
+                if p.startswith("_") and p.endswith("_")
                 and p not in self.parameters
             ]
         # The values of the model parameters (one set of values for each dataset)
-        self.par_values = dict([
-            (ds, deepcopy(dict([(p, 1.) for p in
-                                self.parameters + self.fixed_parameters])))
+        self.par_values = {
+            ds: deepcopy(
+                {p: 1.0 for p in self.parameters + self.fixed_parameters}
+            )
             for ds in self.x
-        ])
+        }
         # BIC and prior temperature
         self.BT = float(BT)
         self.PT = float(PT)
         # Build from string
-        if from_string != None:
+        if from_string is not None:
             self.build_from_string(from_string)
         # For fast fitting, we save past successful fits to this formula
         self.fit_par = {}
@@ -119,94 +152,136 @@ class TreeBase:
         self.bic = self.get_bic()
         self.E, self.EB, self.EP = self.get_energy()
         # Clear cache if the expression was created from string
-        if from_string != None:
+        if from_string is not None:
             self.fit_par = {}
         # To control formula degeneracy (i.e. different trees that
         # correspond to the same cannoninal formula), we store the
         # representative tree for each canonical formula
-        self.representative = {}
-        self.representative[self.canonical()] = (
-            str(self), self.E, deepcopy(self.par_values)
-        )
+        self.representative = {
+            self.canonical(): (str(self), self.E, deepcopy(self.par_values))
+        }
         # Done
         return
 
     # -------------------------------------------------------------------------
-    def __repr__(self):
-        if self.fixed_term == None:
+    def __repr__(self) -> str:
+        """Return the tree expression as a BMS string.
+
+        If a fixed prefactor is set, the tree expression is combined with
+        ``fixed_term`` using ``fixed_term_op``.
+        """
+        if self.fixed_term is None:
             return self.root.pr()
-        else:
-            return '(%s %s %s)' % (self.root.pr(), self.fixed_term_op, self.fixed_term)
+        return f"({self.root.pr()} {self.fixed_term_op} {self.fixed_term})"
 
     # -------------------------------------------------------------------------
-    def pr(self, show_pow=True):
-        if self.fixed_term == None:
+    def pr(self, show_pow: bool = True) -> str:
+        """Return the tree expression as a BMS string.
+
+        ``show_pow`` is forwarded to the root and keeps pow2/pow3 in function
+        form when true. If a fixed prefactor is set, it is combined with the
+        tree expression using ``fixed_term_op``.
+        """
+        if self.fixed_term is None:
             return self.root.pr(show_pow=show_pow)
-        else:
-            return '(%s %s %s)' % (self.root.pr(show_pow=show_pow),
-                                   self.fixed_term_op, self.fixed_term)
+        return (
+            f"({self.root.pr(show_pow=show_pow)} "
+            f"{self.fixed_term_op} {self.fixed_term})"
+        )
 
     # -------------------------------------------------------------------------
     # NEED TO DOUBLE CHECK THIS METHOD!!!!
-    def set_par_values(self, par_values):
-        if set(par_values.keys()) == set(self.x.keys()):
+    def set_par_values(
+        self,
+        par_values: dict[str, float] | dict[str, dict[str, float]],
+    ) -> None:
+        """Set parameter values and refresh the goodness-of-fit state.
+
+        ``par_values`` is either a mapping from dataset labels to parameter
+        dictionaries, or (with a single dataset) a parameter dictionary. The
+        BIC and energy are recalculated afterwards, and the values are cached
+        under the current expression.
+
+        Raise ``ValueError`` if the provided layout matches neither the
+        training datasets nor all model parameters of a single dataset.
+        """
+        if set(par_values) == set(self.x):
             # Parameter sets match the data: simply overwrite
             self.par_values = deepcopy(par_values)
-        elif (set(self.parameters + self.fixed_parameters) <= set(par_values.keys()) and
-              len(list(self.x.keys())) == 1):
+        elif (
+            set(self.parameters + self.fixed_parameters) <= set(par_values)
+            and len(self.x) == 1
+        ):
             # The par_values provided are enough to specify all model
             # parameters (self.parameters is a subset of
             # par_values.keys()) and there is only one dataset: use
             # the data to specify the dataset label.
-            self.par_values = {list(self.x.keys())[0] : deepcopy(par_values)}
+            self.par_values = {next(iter(self.x)): deepcopy(par_values)}
         else:
-            raise ValueError('Parameter datasets do not match x/y datasets.')
+            raise ValueError("Parameter datasets do not match x/y datasets.")
         # Recalculate goodness of fit measures
         self.bic = self.get_bic(fit=False, reset=True)
         self.get_energy(bic=False, reset=True)
         # Save fitted parameters
         self.fit_par[str(self)] = self.par_values
 
-        return
-
     # -------------------------------------------------------------------------
-    def canonical(self, verbose=False):
-        """Return the canonical form of a tree.
+    def canonical(self, verbose: bool = False) -> str:
+        """Return the canonical form of the tree expression.
 
+        Parameters are replaced by ``c1``, ``c2``, ... in order of their first
+        appearance. If the expression cannot be parsed, fall back to its full
+        string form and, when ``verbose`` is true, report a warning.
         """
         try:
-            cansp = sympify(str(self).replace(' ', ''))
+            cansp = sympify(str(self).replace(" ", ""))
             can = str(cansp)
-            ps = list([str(s) for s in cansp.free_symbols])
+            symbols = [str(symbol) for symbol in cansp.free_symbols]
             positions = []
-            for p in ps:
-                if p.startswith('_') and p.endswith('_'):
-                    positions.append((can.find(p), p))
+            for symbol in symbols:
+                if symbol.startswith("_") and symbol.endswith("_"):
+                    positions.append((can.find(symbol), symbol))
             positions.sort()
-            pcount = 1
-            for pos, p in positions:
-                can = can.replace(p, 'c%d' % pcount)
-                pcount += 1
-        except:
+            parameter_count = 1
+            for _, symbol in positions:
+                can = can.replace(symbol, f"c{parameter_count}")
+                parameter_count += 1
+        except Exception:
             if verbose:
-                print('WARNING: Could not get canonical form for', \
-                    str(self), '(using full form!)', file=sys.stderr)
+                print(
+                    f"WARNING: Could not get canonical form for {self} "
+                    "(using full form!)",
+                    file=sys.stderr,
+                )
             can = str(self)
-        return can.replace(' ', '')
+        return can.replace(" ", "")
 
     # -------------------------------------------------------------------------
-    def latex(self):
+    def latex(self) -> str:
+        """Return the tree expression in LaTeX form."""
         return latex(sympify(self.canonical()))
 
     # -------------------------------------------------------------------------
-    def __parse_recursive(self, string, variables=None, parameters=None,
-                          vpreturn=False):
-        """ Parse a string obtained from Tree.__repr__() so that it can be used by build_from_string.
+    def __parse_recursive(
+        self,
+        string: str,
+        variables: list[str] | None = None,
+        parameters: list[str] | None = None,
+        vpreturn: bool = False,
+    ) -> list | tuple[list, list[str], list[str]]:
+        """Parse a string obtained from ``Tree.__repr__()`` into a nested list.
 
+        A leaf becomes ``[value, []]`` and an operation becomes
+        ``[operation, [parsed offspring, ...]]``. Leaves named like ``_name_``
+        are appended to ``parameters`` and all other leaves to ``variables``;
+        when the corresponding argument is omitted, a new list is used.
+
+        If ``vpreturn`` is true, return ``(parsed, parameters, variables)``;
+        otherwise return only ``parsed``.
         """
-        if variables == None:
+        if variables is None:
             variables = []
-        if parameters == None:
+        if parameters is None:
             parameters = []
         # Leaf
         if '(' not in string:
@@ -219,41 +294,11 @@ class TreeBase:
             rval = [string, []]
         # Not a leaf: parse the expression
         else:
-            ready = False
-            while not ready:
-                nterm, terms, nopenpar, op, opactive = 0, [''], 0, '', True
-                for c in string:
-                    if opactive and c == '(':
-                        opactive = False
-                    if opactive and c != ' ':
-                        op += c
-                    elif opactive and c == ' ':
-                        opactive = False
-                        nterm += 1
-                        terms.append('')
-                    elif nopenpar == 1 and c == ' ':
-                        opactive = True
-                    elif c == '(':
-                        if nopenpar > 0:
-                            terms[nterm] += c
-                        nopenpar += 1
-                    elif c == ')':
-                        nopenpar -= 1
-                        if nopenpar > 0:
-                            terms[nterm] += c
-                    else:
-                        terms[nterm] += c
-                if op != '':
-                    ready = True
-                    rval = [op, [self.__parse_recursive(t,
-                                                        variables=variables,
-                                                        parameters=parameters)
-                                 for t in terms]]
-                else:
-                    if string[0] == '(' and string[-1] == ')':
-                        string = string[1:-1]
-                    else:
-                        raise
+            op, terms = self.__parse_head(string)
+            rval = [op, [self.__parse_recursive(t,
+                                                variables=variables,
+                                                parameters=parameters)
+                         for t in terms]]
         # Done parsing
         if vpreturn:
             return rval, parameters, variables
@@ -261,58 +306,124 @@ class TreeBase:
             return rval
 
     # -------------------------------------------------------------------------
-    def __grow_tree(self, target, value, offspring):
-        """Auxiliary function used to recursively grow a tree from an expression parsed with __parse_recursive().
+    @staticmethod
+    def __parse_head(string: str) -> tuple[str, list[str]]:
+        """Split an expression into its head operation and raw term strings.
 
+        Outer parentheses are stripped until an operation is found; raise
+        when the expression contains none.
         """
-        try:
-            tmpoff = [self.variables[0] for i in range(len(offspring))]
-        except IndexError:
-            tmpoff = [self.parameters[0] for i in range(len(offspring))]
-        self.et_replace(target, [value, tmpoff], verbose=False)
-        for i in range(len(offspring)):
-            self.__grow_tree(target.offspring[i],
-                             offspring[i][0], offspring[i][1])
-        return
+        while True:
+            nterm, terms, nopenpar, op, opactive = 0, [''], 0, '', True
+            for char in string:
+                match char:
+                    case '(':
+                        opactive = False
+                        if nopenpar > 0:
+                            terms[nterm] += char
+                        nopenpar += 1
+                    case ')' if opactive:
+                        op += char
+                    case ')':
+                        nopenpar -= 1
+                        if nopenpar > 0:
+                            terms[nterm] += char
+                    case ' ' if opactive:
+                        opactive = False
+                        nterm += 1
+                        terms.append('')
+                    case ' ' if nopenpar == 1:
+                        opactive = True
+                    case _ if opactive:
+                        op += char
+                    case _:
+                        terms[nterm] += char
+            if op != '':
+                return op, terms
+            if string[0] == '(' and string[-1] == ')':
+                string = string[1:-1]
+            else:
+                raise
 
     # -------------------------------------------------------------------------
-    def build_from_string(self, string, verbose=False):
-        """Build the tree from an expression formatted according to Tree.__repr__().
+    def __grow_tree(
+        self,
+        target: Node,
+        value: str,
+        offspring: list[list],
+    ) -> None:
+        """Recursively grow a tree from an expression parsed by ``__parse_recursive``.
 
+        Replace ``target`` with ``value`` and the parsed ``offspring``, then grow
+        each child in turn. ``et_replace`` needs a temporary offspring list,
+        which is filled with the first variable, or with the first parameter
+        when the tree has no variables.
         """
-        tlist, parameters, variables = self.__parse_recursive(string,
-                                                              vpreturn=True)
-        self.__init__(ops=self.ops, prior_par=self.prior_par,
-                      x=self.x, y=self.y, BT=self.BT, PT=self.PT,
-                      parameters=parameters, variables=variables)
+        try:
+            tmpoff = [self.variables[0] for _ in range(len(offspring))]
+        except IndexError:
+            tmpoff = [self.parameters[0] for _ in range(len(offspring))]
+        self.et_replace(target, [value, tmpoff], verbose=False)
+        for i, subtree in enumerate(offspring):
+            self.__grow_tree(target.offspring[i], subtree[0], subtree[1])
+
+    # -------------------------------------------------------------------------
+    def build_from_string(self, string: str, verbose: bool = False) -> None:
+        """Build the tree from an expression formatted like ``Tree.__repr__()``.
+
+        The expression is parsed into a tree, the tree is reinitialized with
+        the variables and parameters found in it, and the goodness-of-fit
+        state is recomputed. Cached fits are discarded.
+        """
+        tlist, parameters, variables = self.__parse_recursive(
+            string,
+            vpreturn=True,
+        )
+        self.__init__(
+            ops=self.ops,
+            prior_par=self.prior_par,
+            x=self.x,
+            y=self.y,
+            BT=self.BT,
+            PT=self.PT,
+            parameters=parameters,
+            variables=variables,
+        )
         self.__grow_tree(self.root, tlist[0], tlist[1])
         self.get_sse(verbose=verbose)
         self.get_bic(verbose=verbose)
         self.fit_par = {}  # Forget all values fitted so far
-        return
 
     # -------------------------------------------------------------------------
-    def build_et_space(self):
-        """Build the space of possible elementary trees, which is a dictionary indexed by the order of the elementary tree.
+    def build_et_space(self) -> dict[int, list]:
+        """Build the space of possible elementary trees, indexed by order.
 
+        Order 0 holds the leaves (variables and parameters); higher orders
+        hold each operation combined with every tuple of lower-order subtrees.
         """
-        et_space = dict([(o, []) for o in self.op_orders])
-        et_space[0] = [[x, []] for x in self.variables + self.parameters]
-        for op, noff in list(self.ops.items()):
-            for vs in product(et_space[0], repeat=noff):
-                et_space[noff].append([op, [v[0] for v in vs]])
+        et_space = {order: [] for order in self.op_orders}
+        et_space[0] = [[leaf, []] for leaf in self.variables + self.parameters]
+        for op, noff in self.ops.items():
+            for subtrees in product(et_space[0], repeat=noff):
+                et_space[noff].append(
+                    [op, [subtree[0] for subtree in subtrees]]
+                )
         return et_space
 
     # -------------------------------------------------------------------------
-    def build_rr_space(self):
+    def build_rr_space(self) -> list[list]:
         """Build the space of possible trees for the root replacement move.
 
+        Unary operations get an empty offspring list; higher-order operations
+        combine with every tuple of leaves except one fixed slot.
         """
         rr_space = []
-        for op, noff in list(self.ops.items()):
+        for op, noff in self.ops.items():
             if noff == 1:
                 rr_space.append([op, []])
             else:
-                for vs in product(self.et_space[0], repeat=(noff-1)):
-                    rr_space.append([op, [v[0] for v in vs]])
+                for subtrees in product(self.et_space[0], repeat=noff - 1):
+                    rr_space.append(
+                        [op, [subtree[0] for subtree in subtrees]]
+                    )
         return rr_space
